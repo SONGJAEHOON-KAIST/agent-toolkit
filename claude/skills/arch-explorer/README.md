@@ -29,3 +29,43 @@ structural overview of a codebase.
 Output defaults to `docs/architecture/index.html` plus a short `README.md`
 covering the layer tree and how to update it. All structure data lives in one
 `MODEL` object at the top of the HTML, so later edits are data edits.
+
+## Map what a branch changed
+
+```
+/arch-explorer:diff [head [base]] [--save-to[=<path>]] [--include-uncommitted]
+```
+
+Draws the same map for the code at the head of a branch, with the boxes,
+arrows and interfaces it added, modified or removed marked, and under it one
+card per block explaining which features changed, with `file:line`. Subagents
+explain the blocks in parallel.
+
+| Given | Compares |
+|---|---|
+| nothing | the current branch against `main` (or `master`) |
+| `head` | `head` against `main` (or `master`) |
+| `head base` | `head` against `base` |
+
+The diff runs from the merge-base, so only the branch's own work shows. The
+skill asks for a base instead of guessing when you are on `main`/`master`,
+when neither exists, or when the branches share no history. It reads other
+branches through `git show` or a temporary worktree and never checks anything
+out in your working tree.
+
+| Option | Output |
+|---|---|
+| (none) | `./<head>-vs-<base>.html` |
+| `--save-to` | `docs/architecture/changes/<head>-vs-<base>.html` |
+| `--save-to=<path>` | `<path>` if it ends in `.html`, else `<path>/<head>-vs-<base>.html` |
+
+`/` in branch names becomes `-`. If the file already exists, it is
+overwritten.
+
+By default only commits count. `--include-uncommitted` compares against the
+working tree instead — staged, unstaged and untracked files, minus what
+`.gitignore` excludes — and works only for the current branch. On `main` it
+can show just your uncommitted changes. The file gets `-uncommitted` after the
+head name (`feature-login-uncommitted-vs-main.html`), so it never overwrites
+the committed comparison. The snapshot goes through a temporary index; your
+staging area is left as it was.
