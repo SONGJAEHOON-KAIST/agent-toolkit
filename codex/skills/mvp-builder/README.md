@@ -8,14 +8,12 @@ Python 프로그램이 상태, 승인, 반복 예산, 발견 원장, 산출물 �
 
 Python **3.10 이상**, Codex CLI와 로그인이 필요하다. macOS/Linux를 대상으로 하며 Windows는 WSL을 사용한다. 구현된 프로젝트에 따라 Node/npm 또는 Python/pytest가 추가로 필요하다.
 
-저장소의 이 변경이 포함된 로컬 체크아웃으로 설치한다:
-
 ```bash
-codex plugin marketplace add /absolute/path/to/agent-toolkit
+codex plugin marketplace add robintech-seoul/agent-toolkit
 codex plugin add mvp-builder@robintech-codex
 ```
 
-게시 후에는 저장소 주소를 마켓플레이스 소스로 사용할 수 있다. Claude의 `robintech` 카탈로그와 Codex의 `robintech-codex` 카탈로그는 같은 저장소에 공존한다. 재설치 후 새 Codex 작업에서 플러그인의 `start`, `approve`, `reject`, `status` 스킬을 선택한다. 네 스킬은 명시적 호출용이다.
+로컬 체크아웃을 시험할 때는 저장소 주소 대신 그 경로를 준다. Claude의 `robintech` 카탈로그와 Codex의 `robintech-codex` 카탈로그는 같은 저장소에 공존한다. 재설치 후 새 Codex 작업에서 플러그인의 `start`, `approve`, `reject`, `status` 스킬을 선택한다. 네 스킬은 명시적 호출용이다.
 
 ## 직접 실행
 

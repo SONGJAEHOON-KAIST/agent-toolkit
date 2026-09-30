@@ -1,63 +1,117 @@
 # RobinTech agent toolkit
 
-Agent tooling RobinTech builds and uses. One repository, platform-specific marketplaces, organized by the agent each tool targets.
+Agent tooling RobinTech builds and uses, for Claude Code and Codex. Everything
+installs from this one repository through two marketplaces: **`robintech`**
+for Claude Code and **`robintech-codex`** for Codex.
 
-```
-claude/
-├── plugins/   product tooling — tied to a RobinTech product
-└── skills/    general-purpose skills — work on any codebase, any stack
-codex/
-└── skills/    Codex packages (currently mvp-builder)
-```
+## What's here
 
-Everything under `claude/` installs through a single Claude Code marketplace,
-**`robintech`**. Codex packages live under `codex/` and use the **`robintech-codex`** catalog at `.agents/plugins/marketplace.json`.
+| Tool | What it does | Commands | Claude Code | Codex |
+|---|---|---|:-:|:-:|
+| [`arch-explorer`](./claude/skills/arch-explorer) | Map a codebase into one self-contained HTML file you drill through: boxes are modules, labeled arrows are the interfaces between them, each expanding to signatures and `file:line`. Maps what a branch changed; opens the map with a chat panel that answers from the code-wiki. | `build` `diff` `open` | ✓ | — |
+| [`code-wiki`](./claude/skills/code-wiki) | Build and maintain a hierarchical, LLM-generated wiki over a codebase. Leaf folders summarize their files, parents synthesize their children, topic pages capture cross-cutting concerns, and `sync` follows the source. Committed, so a team pays for it once. | `init` `build` `sync` `query` `topic` `lint` `rebuild` | ✓ | — |
+| [`mvp-builder`](./claude/skills/mvp-builder) | Take an idea to an MVP through a gated pipeline: spec → your approval → design/review loops → your approval → build, with ledger-based delta review and machine gates. | `start` `approve` `reject` `status` | ✓ | ✓ ([port](./codex/skills/mvp-builder)) |
+| [`robin-cloud-onboarding`](./claude/plugins/robin-cloud-onboarding) | Onboard a repo to [Robin-Cloud](https://robin-cloud.com) end to end: Dockerfiles, a keyless CI workflow and nginx, then the console setup (GitHub App, ECR, deploy config, DB, custom domain + TLS) with a verified checkpoint after each step. | `onboard` | ✓ | — |
+
+In Claude Code a command runs as `/<tool>:<command>`, e.g. `/arch-explorer:build`.
+Each tool's README has the full usage.
 
 ## Install
 
 ### Claude Code
 
+Add the marketplace once, then install the tools you want:
+
 ```bash
-# add the marketplace once, then install what you want from it
 /plugin marketplace add robintech-seoul/agent-toolkit
+
 /plugin install arch-explorer@robintech
+/plugin install code-wiki@robintech
+/plugin install mvp-builder@robintech
+/plugin install robin-cloud-onboarding@robintech
 ```
 
-(or via the CLI: `claude plugin marketplace add robintech-seoul/agent-toolkit`
-then `claude plugin install arch-explorer@robintech`.)
+From a shell, the same is `claude plugin marketplace add robintech-seoul/agent-toolkit`
+and `claude plugin install <tool>@robintech`.
+
+To update:
+
+```bash
+claude plugin marketplace update robintech
+claude plugin update <tool>@robintech
+```
+
+If a new command does not show up, start a new session.
 
 ### Codex
 
-From a local checkout containing the Codex port:
+Only `mvp-builder` has a Codex version.
 
 ```bash
-codex plugin marketplace add /absolute/path/to/agent-toolkit
+codex plugin marketplace add robintech-seoul/agent-toolkit
 codex plugin add mvp-builder@robintech-codex
 ```
 
-See [Codex setup](./codex/README.md) and [MVP-Builder usage](./codex/skills/mvp-builder/README.md). Remote installation requires this change to be published first.
+To update, run `codex plugin marketplace upgrade`, then the `codex plugin add`
+line again. In a new Codex task, choose the `start`, `approve`, `reject` and
+`status` skills. See
+[MVP-Builder for Codex](./codex/skills/mvp-builder/README.md).
 
-| Tool | Claude Code | Codex |
-|---|---|---|
-| mvp-builder | Supported | Supported by this port |
-| arch-explorer | Supported | Not ported here |
-| code-wiki | Supported | Not ported here |
-| robin-cloud-onboarding | Supported | Not ported here |
+### What each tool needs
 
-## What's here
-
-| | What it does |
+| Tool | Needs |
 |---|---|
-| [`arch-explorer`](./claude/skills/arch-explorer) | Map a codebase into a single self-contained HTML file you can drill through — boxes are modules, labeled arrows are the interfaces between them, each expanding to full signatures and `file:line` sources. `diff` maps what a branch changed against main, block by block. |
-| [`code-wiki`](./claude/skills/code-wiki) | Build and maintain a hierarchical, LLM-generated wiki over a codebase — leaf folders summarize their files, parents synthesize their children, topic pages capture cross-cutting concerns, and `sync` keeps it current as the source changes. Committed to the repo, so the synthesis cost is paid once per team. |
-| [`mvp-builder`](./claude/skills/mvp-builder) | Take an idea to an MVP through a gated pipeline — spec → your approval → design/review loops → your approval → build. Ledger-based delta review, machine gates on every phase, built-in agent-skills (`--full`) or lightweight prompts (`--lite`). |
-| [`robin-cloud-onboarding`](./claude/plugins/robin-cloud-onboarding) | Onboard a repo to [Robin-Cloud](https://robin-cloud.com) end-to-end — generate Dockerfiles + a keyless CI workflow + nginx, then drive the console setup (GitHub App, ECR, deploy config, DB, custom domain + TLS) with verified checkpoints. No cluster access needed. |
+| arch-explorer | `python3` and `git`. `open`'s chat panel also needs the `code-wiki` plugin and the `claude` or `codex` CLI; without them the map opens without the chat. |
+| code-wiki | `python3` and its Python packages: `pip install mistune pyyaml` (see [its README](./claude/skills/code-wiki/README.md#install)). A git repository for `sync`. |
+| mvp-builder (Claude Code) | `bash` and `jq`; `npm` or `pytest` for the project it builds. |
+| mvp-builder (Codex) | Python 3.10+, the Codex CLI signed in; macOS/Linux (WSL on Windows). |
+| robin-cloud-onboarding | A Robin-Cloud console account and project; `gh` signed in with admin on the repo. |
 
-## Adding to the marketplace
+### Try without installing
 
-Codex packages use `.codex-plugin/plugin.json`, `skills/<name>/SKILL.md`, and a root `.agents/plugins/marketplace.json` entry pointing to the package. Keep platform-specific runtime files inside the package so installation remains self-contained. See [Codex packages](./codex/skills/README.md).
+Load a plugin from a directory for one Claude Code session. It replaces an
+installed plugin of the same name for that session only:
 
-### Claude Code packaging
+```bash
+git clone https://github.com/robintech-seoul/agent-toolkit
+claude --plugin-dir agent-toolkit/claude/skills/arch-explorer
+```
+
+## Using them together
+
+`arch-explorer` and `code-wiki` share a repository without depending on each
+other, and meet in `/arch-explorer:open`:
+
+```
+/code-wiki:init, /code-wiki:build   → wiki/        (commit it)
+/arch-explorer:build                → docs/architecture/index.html
+/arch-explorer:open                 → the map, with a chat panel answering from wiki/
+```
+
+`open` checks that both are current first, and offers to build, create or sync
+whichever is missing or behind.
+
+---
+
+## Contributing
+
+### Layout
+
+```
+.claude-plugin/marketplace.json   Claude Code catalog  (robintech)
+.agents/plugins/marketplace.json  Codex catalog        (robintech-codex)
+claude/
+├── plugins/   tied to a RobinTech product
+└── skills/    general-purpose: any codebase, any stack
+codex/
+└── skills/    Codex packages
+index.html     GitHub Pages landing page
+```
+
+Each tool is one self-contained directory: everything it runs ships inside
+it, so installing it pulls in nothing else.
+
+### Claude Code packages
 
 Claude Code installs **plugins**, so everything here — including a lone skill —
 ships as a plugin directory listed in
@@ -84,7 +138,18 @@ The marketplace manifest has to sit at `.claude-plugin/marketplace.json` in the
 repo root — Claude Code fixes that path — but its `source` values are relative,
 which is what lets the plugins themselves live under `claude/`.
 
-## The published site
+Bump `version` in `plugin.json` with every change users should receive:
+`claude plugin update` reports "already at the latest version" while it is
+unchanged.
+
+### Codex packages
+
+Codex packages use `.codex-plugin/plugin.json`, `skills/<name>/SKILL.md`, and a
+root `.agents/plugins/marketplace.json` entry pointing to the package. Keep
+platform-specific runtime files inside the package. See
+[Codex packages](./codex/skills/README.md) and [AGENTS.md](./AGENTS.md).
+
+### The published site
 
 [`index.html`](./index.html) at the repo root is the GitHub Pages landing page —
 it lists each plugin and links to its guide. A plugin with a user-facing guide
@@ -96,10 +161,20 @@ The empty `.nojekyll` marker turns off Jekyll so files are served as-is; the
 tradeoff is that a directory without an `index.html` 404s instead of falling
 back to its README.
 
-## Developing
+### Developing
 
-To try a change before pushing, add the local checkout as a marketplace:
+Try a change in one session with `claude --plugin-dir <path to the plugin>`,
+or add the checkout as a marketplace:
 
 ```bash
 claude plugin marketplace add /path/to/agent-toolkit
+codex plugin marketplace add /path/to/agent-toolkit
+```
+
+Tests:
+
+```bash
+python3 -m unittest discover -s claude/skills/arch-explorer -t claude/skills/arch-explorer
+python3 -m pytest claude/skills/code-wiki/tests
+python3 -m unittest discover -s codex/skills/mvp-builder/tests
 ```
