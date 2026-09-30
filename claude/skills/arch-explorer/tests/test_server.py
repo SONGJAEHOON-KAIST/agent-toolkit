@@ -40,6 +40,20 @@ class PromptTest(unittest.TestCase):
         self.assertIn("3 file(s) changed since abcdef1234", p)
         self.assertTrue(p.endswith("question:\nwhat is this?"))
 
+    def test_subdir_wikis_are_located_for_the_engine(self):
+        wikis = [{"dir": "web/api", "state": "fresh"},
+                 {"dir": "web/ui", "state": "stale", "changed": 2, "sha": "0123456789abc"}]
+        p = chat_server.build_prompt("q", None, {"state": "stale", "changed": 2}, wikis)
+        self.assertIn("[wikis] code-wiki locations, relative to the repository root: "
+                      "`web/api/wiki/`, `web/ui/wiki/`", p)
+        self.assertIn("[wiki status] web/ui/wiki/: the wiki does not reflect 2 file(s)", p)
+        self.assertNotIn("web/api/wiki/: ", p)
+
+    def test_root_wiki_prompt_is_unchanged(self):
+        wikis = [{"dir": ".", "state": "fresh"}]
+        self.assertEqual(chat_server.build_prompt("q", None, {"state": "fresh"}, wikis),
+                         "question:\nq")
+
     def test_no_context(self):
         p = chat_server.build_prompt("q", None, {"state": "fresh"})
         self.assertEqual(p, "question:\nq")
@@ -160,6 +174,20 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(s["engine"], self.engine)
         self.assertEqual(s["map"]["state"], "unknown")
         self.assertEqual(s["wiki"]["state"], "missing")
+        self.assertEqual(s["wikis"], [{"dir": ".", "state": "missing"}])
+
+    def test_status_and_prompt_with_subdir_wiki(self):
+        self.repo.write("pkg/src/a.py")
+        self.repo.write("pkg/wiki/config.yaml", "source_roots:\n  - path: src\n")
+        self.repo.commit()
+        self.srv.wikis = ["pkg"]
+        _, raw = self.request("GET", "/api/status", headers={"Cookie": self.cookie})
+        s = json.loads(raw)
+        self.assertEqual(s["wiki"]["state"], "fresh")
+        self.assertEqual([w["dir"] for w in s["wikis"]], ["pkg"])
+        self.ask()
+        self.assertIn("[wikis] code-wiki locations, relative to the repository root: `pkg/wiki/`",
+                      self.calls()[0]["stdin"])
 
     # -- ask
 
@@ -272,6 +300,16 @@ class LaunchTest(unittest.TestCase):
         self.assertFalse(chat_server.pid_alive(a["pid"]))
         self.assertTrue(self.cli("stop")["stopped"])
         self.assertFalse(self.cli("stop")["stopped"])
+
+    def test_changed_wikis_restart_the_server(self):
+        a = self.cli("launch", "--engine", "claude", "--no-open")
+        self.assertEqual(a["wikis"], ["."])
+        b = self.cli("launch", "--engine", "claude", "--no-open", "--wiki", "web/api")
+        self.assertFalse(b["reused"])
+        self.assertEqual(b["wikis"], ["web/api"])
+        c = self.cli("launch", "--engine", "claude", "--no-open", "--wiki", "./web/api/")
+        self.assertTrue(c["reused"])
+        self.assertEqual(b["pid"], c["pid"])
 
     def test_missing_map(self):
         args = [sys.executable, str(BIN / "chat_server.py"), "launch", "--root",

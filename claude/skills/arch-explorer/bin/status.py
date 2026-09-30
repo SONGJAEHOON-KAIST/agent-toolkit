@@ -4,10 +4,18 @@
 Read-only: this never writes to the work tree, `wiki/` or `.code-wiki/`,
 except for `record`, which writes the map's sidecar on request.
 
-    status.py check  --root <repo> --map <index.html>
+    status.py check  --root <repo> --map <index.html> [--wiki <dir> …]
     status.py record --root <repo> --map <index.html> --scope <path> [--scope …]
 
-`check` prints {"map": {...}, "wiki": {...}} as JSON.
+`check` prints {"map": {...}, "wiki": {...}, "wikis": [...]} as JSON. `wiki` is
+the combined state; `wikis` has one entry per wiki directory, each with `dir`.
+
+`--wiki <dir>` names a directory, relative to the repo root, that holds a
+code-wiki (`<dir>/wiki/config.yaml`, `<dir>/.code-wiki/state.json`) — for a
+monorepo whose wikis live next to each sub-project. Repeat it for several;
+without it the wiki is the one at the repo root (`.`). When the root has no
+wiki and no `--wiki` was given, `wiki.candidates` lists the directories that
+hold a committed `wiki/config.yaml`.
 
 Map states:  missing | unknown | stale | fresh
 Wiki states: missing | unknown | stale | fresh
@@ -35,6 +43,9 @@ WIKI_STATE_VERSION = 1
 SAMPLE = 10
 # Never counted as source changes: they are outputs, not inputs.
 ALWAYS_EXCLUDED = ("wiki/", ".code-wiki/")
+DEFAULT_WIKI = "."
+# Worst first: the combined state of several wikis is the worst of them.
+WIKI_RANK = {"missing": 3, "unknown": 2, "stale": 1, "fresh": 0}
 
 
 def _git(root: Path, *args: str) -> str | None:
@@ -77,6 +88,44 @@ def _rel(root: Path, path: Path) -> str | None:
         return None
 
 
+def _under(dir_: str, rel: str) -> str:
+    """`rel` inside the repo-relative directory `dir_` (`.` is the repo root)."""
+    rel = rel.strip("/")
+    if rel in ("", "."):
+        return dir_
+    return rel if dir_ == "." else f"{dir_}/{rel}"
+
+
+def wiki_location(dir_: str) -> str:
+    """Where the pages of the wiki held by `dir_` live, repo-relative: `web/api/wiki/`."""
+    return _under(dir_, "wiki") + "/"
+
+
+def normalize_wiki_dirs(root: Path, dirs: list[str] | None) -> list[str]:
+    """Repo-relative POSIX paths, deduplicated in order; `["."]` when none given.
+
+    A directory outside the repository is an error: freshness is read from this
+    repository's git history, which says nothing about it.
+    """
+    out: list[str] = []
+    for d in dirs or [DEFAULT_WIKI]:
+        p = Path(d)
+        rel = _rel(root, p if p.is_absolute() else root / p)
+        if rel is None:
+            raise SystemExit(f"--wiki {d}: not inside the repository {root}")
+        if rel not in out:
+            out.append(rel)
+    return out
+
+
+def wiki_excludes(wiki_dirs: list[str] | None) -> list[str]:
+    """The wiki output directories of every wiki: never counted as source changes."""
+    out = []
+    for d in wiki_dirs or [DEFAULT_WIKI]:
+        out += [_under(d, "wiki/") + "/", _under(d, ".code-wiki/") + "/"]
+    return out
+
+
 def _changes_result(changed: list[str], base: str) -> dict:
     if changed:
         return {"state": "stale", "sha": base, "changed": len(changed),
@@ -86,7 +135,7 @@ def _changes_result(changed: list[str], base: str) -> dict:
 
 # ---------------------------------------------------------------- map
 
-def map_status(root: Path, map_path: Path) -> dict:
+def map_status(root: Path, map_path: Path, wiki_dirs: list[str] | None = None) -> dict:
     if not map_path.is_file():
         return {"state": "missing"}
     sidecar = map_path.parent / SIDECAR_NAME
@@ -105,7 +154,7 @@ def map_status(root: Path, map_path: Path) -> dict:
     if not isinstance(sha, str) or not _is_commit(root, sha):
         return {"state": "unknown", "reason": f"build commit {sha!r} not found"}
     scope = meta.get("scope") or ["."]
-    exclude = list(ALWAYS_EXCLUDED)
+    exclude = list(ALWAYS_EXCLUDED) + wiki_excludes(wiki_dirs)
     out_dir = _rel(root, map_path.parent)
     if out_dir and out_dir != ".":
         exclude.append(out_dir)
@@ -144,14 +193,17 @@ def record(root: Path, map_path: Path, scope: list[str]) -> dict:
 
 # ---------------------------------------------------------------- wiki
 
-def _source_roots(root: Path) -> list[str] | None:
-    """source_roots from wiki/config.yaml; None when PyYAML is absent or the file is odd."""
+def _source_roots(base: Path) -> list[str] | None:
+    """source_roots from <base>/wiki/config.yaml, relative to `base`.
+
+    None when PyYAML is absent or the file is odd.
+    """
     try:
         import yaml  # code-wiki's own dependency; optional here
     except ImportError:
         return None
     try:
-        data = yaml.safe_load((root / "wiki/config.yaml").read_text(encoding="utf-8"))
+        data = yaml.safe_load((base / "wiki/config.yaml").read_text(encoding="utf-8"))
     except Exception:
         return None
     entries = data.get("source_roots") if isinstance(data, dict) else None
@@ -166,10 +218,17 @@ def _source_roots(root: Path) -> list[str] | None:
     return paths
 
 
-def wiki_status(root: Path) -> dict:
-    if not (root / "wiki/config.yaml").is_file():
+def wiki_status(root: Path, wiki_dir: str = DEFAULT_WIKI) -> dict:
+    """State of the code-wiki held by `wiki_dir` (repo-relative; `.` is the root).
+
+    code-wiki's paths — `source_roots`, the `wiki/` it infers from — are relative
+    to the directory that holds the wiki, so they are rebased onto the repo root
+    before asking git, which reports paths from the root.
+    """
+    base_dir = root / wiki_dir
+    if not (base_dir / "wiki/config.yaml").is_file():
         return {"state": "missing"}
-    state_path = root / ".code-wiki/state.json"
+    state_path = base_dir / ".code-wiki/state.json"
     base, basis = None, None
     if state_path.is_file():
         try:
@@ -181,20 +240,55 @@ def wiki_status(root: Path) -> dict:
         base, basis = state.get("last_ingested_sha"), "state"
     else:
         # Same inference code-wiki's bootstrap uses, without writing state.json.
-        out = _git(root, "log", "-1", "--format=%H", "--", "wiki/")
+        out = _git(root, "log", "-1", "--format=%H", "--", _under(wiki_dir, "wiki/"))
         base, basis = (out.strip() or None) if out else None, "inferred"
     if not base:
         return {"state": "unknown", "reason": "no ingest commit recorded or inferable"}
     if not _is_commit(root, base):
         return {"state": "unknown", "reason": f"ingest commit {base} not found"}
-    roots = _source_roots(root)
-    changed = _changed(root, base, roots or ["."], list(ALWAYS_EXCLUDED))
+    roots = _source_roots(base_dir)
+    scope = [_under(wiki_dir, r) for r in roots] if roots else [wiki_dir]
+    changed = _changed(root, base, scope, list(ALWAYS_EXCLUDED) + wiki_excludes([wiki_dir]))
     if changed is None:
         return {"state": "unknown", "reason": "git diff failed"}
     result = _changes_result(changed, base)
     result["basis"] = basis
-    result["source_roots"] = roots  # None means "whole repo" (conservative)
+    result["source_roots"] = roots  # None means "the wiki's whole directory" (conservative)
     return result
+
+
+def wiki_candidates(root: Path) -> list[str]:
+    """Directories below the root holding a committed code-wiki (`<dir>/wiki/config.yaml`)."""
+    out = _git(root, "ls-files", "--", ":(glob)**/wiki/config.yaml") or ""
+    dirs = []
+    for f in out.splitlines():
+        d = f[: -len("/wiki/config.yaml")] if f.endswith("/wiki/config.yaml") else ""
+        if d and d not in dirs:
+            dirs.append(d)
+    return dirs
+
+
+def wikis_status(root: Path, wiki_dirs: list[str] | None = None) -> tuple[dict, list[dict]]:
+    """(combined, per-wiki). With one wiki the combined state is that wiki's own."""
+    dirs = wiki_dirs or [DEFAULT_WIKI]
+    each = [{"dir": d, **wiki_status(root, d)} for d in dirs]
+    if len(each) == 1:
+        combined = {k: v for k, v in each[0].items() if k != "dir"}
+    else:
+        worst = max(each, key=lambda w: WIKI_RANK[w["state"]])["state"]
+        combined = {"state": worst}
+        if worst == "stale":
+            combined["changed"] = sum(w.get("changed", 0) for w in each
+                                      if w["state"] == "stale")
+        elif worst != "fresh":
+            combined["reason"] = "; ".join(
+                f"{w['dir']}: {w['state']}" + (f" ({w['reason']})" if w.get("reason") else "")
+                for w in each if w["state"] != "fresh")
+    if not wiki_dirs and combined["state"] == "missing":
+        candidates = wiki_candidates(root)
+        if candidates:
+            combined["candidates"] = candidates
+    return combined, each
 
 
 # ---------------------------------------------------------------- cli
@@ -208,13 +302,19 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--map", required=True, type=Path)
         if name == "record":
             p.add_argument("--scope", action="append", default=[])
+        else:
+            p.add_argument("--wiki", action="append", default=[], metavar="DIR",
+                           help="directory holding a code-wiki, relative to --root; "
+                                "repeatable (default: the repo root)")
     args = ap.parse_args(argv)
     root = args.root.resolve()
     map_path = (args.map if args.map.is_absolute() else root / args.map).resolve()
     if args.cmd == "record":
         out = record(root, map_path, args.scope)
     else:
-        out = {"map": map_status(root, map_path), "wiki": wiki_status(root)}
+        given = normalize_wiki_dirs(root, args.wiki) if args.wiki else None
+        combined, each = wikis_status(root, given)
+        out = {"map": map_status(root, map_path, given), "wiki": combined, "wikis": each}
     print(json.dumps(out, indent=2, ensure_ascii=False))
     return 0
 

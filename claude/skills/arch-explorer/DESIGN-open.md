@@ -277,6 +277,14 @@ arch-explorer는 code-wiki 코드를 import하거나 호출하지 않는다. cod
   파일만 바뀌었는데 stale로 판정할 수 있다. 이 경우 sync가 "up to date"를 보고하고
   끝나므로 비용은 질문 한 번이다. 반대 방향(낡았는데 최신으로 판정)은 나오지 않는다.
 - **커밋되지 않은 변경은 보지 않는다.** code-wiki가 커밋 단위로 동작하기 때문이다.
+- **wiki 위치 (0.3.1)**: 기본은 저장소 루트다. 모노레포처럼 하위 프로젝트마다 wiki가
+  있으면 `--wiki <dir>`(반복 가능)로 그 디렉터리들을 준다. code-wiki의 경로
+  (`source_roots`, 추론용 `wiki/`)는 wiki를 담은 디렉터리 기준이라, git에 묻기 전에
+  루트 기준으로 옮긴다. 여러 wiki의 합산 상태는 가장 나쁜 것
+  (missing > unknown > stale > fresh)이고 `wikis`에 wiki별 상태가 따로 있다. 루트에
+  wiki가 없고 `--wiki`도 없으면 커밋된 `*/wiki/config.yaml`을 `candidates`로 알려
+  루트에 새 wiki를 만드는 대신 그것을 쓰자고 묻는다. 엔진에는 `[wikis]` 줄로 위치를
+  알린다. 루트 wiki 하나일 때 프롬프트는 이전과 같다.
 
 ### 2.4 [핵심] 스킬 흐름: open과 build가 서로를 부른다
 
