@@ -24,6 +24,7 @@ repository, stop and say that freshness checks and the chat need one.
 
 ```
 /arch-explorer:open [map path] [--engine=claude|codex] [--reset-engine] [--port=N]
+                   [--wiki=<dir> …]
 ```
 
 | Given | Meaning |
@@ -32,14 +33,18 @@ repository, stop and say that freshness checks and the chat need one.
 | `--engine` | answer with this engine, this time only; the saved default is untouched |
 | `--reset-engine` | forget the saved default engine and choose again (§3) |
 | `--port` | fixed port for the server; default: any free port |
+| `--wiki` | a directory, relative to the repo root, that holds a code-wiki (`<dir>/wiki/`, `<dir>/.code-wiki/`) — for a monorepo whose wikis sit next to each sub-project. Repeatable. Default: the wiki at the repo root |
 
 Anything else, ask about rather than guess.
 
 ## 1. The map
 
 ```bash
-python3 "<plugin>/bin/status.py" check --root <root> --map <map path>
+python3 "<plugin>/bin/status.py" check --root <root> --map <map path> [--wiki <dir> …]
 ```
+
+Pass every `--wiki` the user gave, here and in every later `check` and
+`launch`. Call the list of them *the wiki dirs*; empty means the repo root.
 
 Read `map` from the output:
 
@@ -61,7 +66,14 @@ panel (chat off).
 1. **Is code-wiki installed?** Look for `code-wiki:sync` among the available
    skills. If it is not there, say the chat needs it —
    `/plugin install code-wiki@robintech` — and continue with chat off.
-2. Read `wiki` from the §1 output (re-run the check if you built the map):
+2. Read `wiki` from the §1 output (re-run the check if you built the map).
+   `wiki` is the combined state of the wiki dirs; `wikis` has one entry per
+   dir (with `dir`), so act on each wiki that is not `fresh`. When there is no
+   wiki at the root and no `--wiki` was given, `wiki.candidates` may list
+   directories that hold one — then, instead of offering to create a root
+   wiki, ask "No code-wiki at the repo root, but found ones in `<candidates>`.
+   Use them?" Yes → those become the wiki dirs; re-run the check with a
+   `--wiki` for each and continue with its result.
 
 | `wiki.state` | Do |
 |---|---|
@@ -71,7 +83,10 @@ panel (chat off).
 | `fresh` | Go on. |
 
 Run code-wiki through its own skills (the Skill tool) and let them ask their
-own questions. Do not call code-wiki's scripts by path. If init or build is
+own questions. Do not call code-wiki's scripts by path. code-wiki works on the
+wiki of the directory it runs in, so for a wiki dir other than the root, say
+that `/code-wiki:sync` (or init/build) must run from `<dir>` and let the user
+run it there rather than creating a wiki at the root. If init or build is
 declined or fails partway, continue with chat off and say so.
 
 After a create or sync, run the check again. If the wiki still is not
@@ -104,11 +119,11 @@ Chat on:
 
 ```bash
 python3 "<plugin>/bin/chat_server.py" launch --root <root> --map <map path> \
-  --engine <engine> [--port N]
+  --engine <engine> [--port N] [--wiki <dir> …]
 ```
 
 This reuses a server already running for this repo and map (a different
-engine restarts it), otherwise starts one detached, waits until it answers,
+engine or different wiki dirs restart it), otherwise starts one detached, waits until it answers,
 and opens the browser. It prints `url`, `pid`, `reused` and `log`, or `error`
 and `log` — on an error, show the last lines of the log and stop.
 
@@ -124,7 +139,8 @@ In a few lines:
 
 - the URL (it carries a one-time token; it works only on this machine),
 - the engine, and whether it is the saved default,
-- the map's and wiki's state, including anything left stale by choice,
+- the map's and wiki's state — per wiki dir when there are several —
+  including anything left stale by choice,
 - chat off, and why, when that is the case,
 - how to stop the server:
   `python3 "<plugin>/bin/chat_server.py" stop --root <root> --map <map path>`.

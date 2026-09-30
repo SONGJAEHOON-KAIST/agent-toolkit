@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Serve an architecture map with a chat panel that answers from the code-wiki.
 
-    chat_server.py launch --root <repo> --map <index.html> --engine claude|codex
+    chat_server.py launch --root <repo> --map <index.html> --engine claude|codex [--wiki <dir> …]
                           [--port N] [--no-open] [--timeout SEC]
     chat_server.py stop   --root <repo> --map <index.html>
     chat_server.py serve  …same as launch…      (foreground; launch runs this)
@@ -134,16 +134,30 @@ def format_context(ctx) -> str:
     return text if len(text) <= MAX_CONTEXT else text[:MAX_CONTEXT] + "\n…(truncated)"
 
 
-def build_prompt(question: str, ctx, wiki: dict) -> str:
+def _wiki_status_line(wiki: dict, where: str = "") -> str | None:
+    label = f"{where}: " if where else ""
+    if wiki.get("state") == "stale":
+        return (f"[wiki status] {label}the wiki does not reflect {wiki.get('changed')} "
+                f"file(s) changed since {str(wiki.get('sha'))[:10]}.")
+    if wiki.get("state") != "fresh":
+        return f"[wiki status] {label}{wiki.get('state')}: {wiki.get('reason', '')}"
+    return None
+
+
+def build_prompt(question: str, ctx, wiki: dict, wikis: list[dict] | None = None) -> str:
+    """`wikis` (per-wiki status with `dir`) matters only when the wikis are not
+    the single one at the repo root: then the engine is told where they are."""
     parts = []
     block = format_context(ctx)
     if block:
         parts.append(block)
-    if wiki.get("state") == "stale":
-        parts.append(f"[wiki status] the wiki does not reflect {wiki.get('changed')} "
-                     f"file(s) changed since {str(wiki.get('sha'))[:10]}.")
-    elif wiki.get("state") != "fresh":
-        parts.append(f"[wiki status] {wiki.get('state')}: {wiki.get('reason', '')}")
+    if wikis and [w.get("dir") for w in wikis] != [status.DEFAULT_WIKI]:
+        where = ", ".join(f"`{status.wiki_location(w['dir'])}`" for w in wikis)
+        parts.append(f"[wikis] code-wiki locations, relative to the repository root: {where}")
+        parts += [line for w in wikis
+                  if (line := _wiki_status_line(w, status.wiki_location(w["dir"])))]
+    elif (line := _wiki_status_line(wiki)):
+        parts.append(line)
     parts.append(f"question:\n{question}")
     return "\n\n".join(parts)
 
@@ -154,10 +168,11 @@ class ChatServer(ThreadingHTTPServer):
     daemon_threads = True
 
     def __init__(self, root: Path, map_path: Path, engine: str, port: int,
-                 timeout: int, token: str | None = None):
+                 timeout: int, token: str | None = None, wikis: list[str] | None = None):
         super().__init__(("127.0.0.1", port), Handler)
         self.root = root
         self.map_path = map_path
+        self.wikis = wikis or [status.DEFAULT_WIKI]
         self.engine = engine
         self.timeout = timeout
         self.token = token or secrets.token_urlsafe(24)
@@ -255,12 +270,16 @@ class Handler(BaseHTTPRequestHandler):
         if url.path == "/health":
             return self._json(200, {"ok": True, "pid": os.getpid(), "engine": self.server.engine,
                                     "root": str(self.server.root),
-                                    "map": str(self.server.map_path)})
+                                    "map": str(self.server.map_path),
+                                    "wikis": self.server.wikis})
         if url.path == "/api/status":
+            srv = self.server
+            wiki, wikis = status.wikis_status(srv.root, srv.wikis)
             return self._json(200, {
-                "engine": self.server.engine,
-                "map": status.map_status(self.server.root, self.server.map_path),
-                "wiki": status.wiki_status(self.server.root),
+                "engine": srv.engine,
+                "map": status.map_status(srv.root, srv.map_path, srv.wikis),
+                "wiki": wiki,
+                "wikis": wikis,
             })
         return self._json(404, {"error": "not found"})
 
@@ -330,7 +349,7 @@ class Handler(BaseHTTPRequestHandler):
         srv = self.server
         ad = engines.adapter(srv.engine, srv.root)
         rules = RULES_PATH.read_text(encoding="utf-8")
-        prompt = build_prompt(question, ctx, status.wiki_status(srv.root))
+        prompt = build_prompt(question, ctx, *status.wikis_status(srv.root, srv.wikis))
         session = conv["session"]
 
         self.send_response(200)
@@ -431,13 +450,14 @@ class Handler(BaseHTTPRequestHandler):
 
 def serve(args) -> int:
     rt = runtime_file(args.root, args.map)
-    srv = ChatServer(args.root, args.map, args.engine, args.port, args.timeout)
+    srv = ChatServer(args.root, args.map, args.engine, args.port, args.timeout,
+                     wikis=args.wikis)
     srv.verbose = True
     rt.parent.mkdir(parents=True, exist_ok=True)
     tmp = rt.with_suffix(".tmp")
     tmp.write_text(json.dumps({"pid": os.getpid(), "port": srv.port, "token": srv.token,
                                "engine": srv.engine, "root": str(args.root),
-                               "map": str(args.map)}), encoding="utf-8")
+                               "map": str(args.map), "wikis": srv.wikis}), encoding="utf-8")
     os.chmod(tmp, 0o600)  # the token lives here
     os.replace(tmp, rt)
 
@@ -472,7 +492,9 @@ def launch(args) -> int:
     rt = runtime_file(args.root, args.map)
     info = read_runtime(rt)
     if info and pid_alive(info.get("pid")) and health(info["port"], info["token"]):
-        if info.get("engine") == args.engine and (not args.port or args.port == info["port"]):
+        same = (info.get("engine") == args.engine
+                and info.get("wikis", [status.DEFAULT_WIKI]) == args.wikis)
+        if same and (not args.port or args.port == info["port"]):
             url = f"http://127.0.0.1:{info['port']}/?t={info['token']}"
             return _launched(args, url, info["pid"], info["port"], reused=True)
         _stop_pid(info["pid"])
@@ -482,6 +504,8 @@ def launch(args) -> int:
     cmd = [sys.executable, str(Path(__file__).resolve()), "serve",
            "--root", str(args.root), "--map", str(args.map), "--engine", args.engine,
            "--port", str(args.port), "--timeout", str(args.timeout)]
+    for d in args.wikis:
+        cmd += ["--wiki", d]
     with open(log, "ab") as logf:
         child = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=logf, stderr=logf,
                                  start_new_session=True, close_fds=True)
@@ -505,7 +529,7 @@ def _launched(args, url: str, pid: int, port: int, reused: bool) -> int:
     if not args.no_open:
         webbrowser.open(url)
     print(json.dumps({"url": url, "pid": pid, "port": port, "engine": args.engine,
-                      "reused": reused, "log": str(runtime_file(args.root, args.map)
+                      "wikis": args.wikis, "reused": reused, "log": str(runtime_file(args.root, args.map)
                                                    .with_suffix(".log"))}, indent=2))
     return 0
 
@@ -533,11 +557,16 @@ def main(argv: list[str] | None = None) -> int:
             p.add_argument("--engine", required=True, choices=engines.ENGINES)
             p.add_argument("--port", type=int, default=0)
             p.add_argument("--timeout", type=int, default=300)
+            p.add_argument("--wiki", action="append", default=[], metavar="DIR",
+                           help="directory holding a code-wiki, relative to --root; "
+                                "repeatable (default: the repo root)")
         if name == "launch":
             p.add_argument("--no-open", action="store_true")
     args = ap.parse_args(argv)
     args.root = args.root.resolve()
     args.map = (args.map if args.map.is_absolute() else args.root / args.map).resolve()
+    if args.cmd != "stop":
+        args.wikis = status.normalize_wiki_dirs(args.root, args.wiki)
     if args.cmd != "stop" and not args.map.is_file():
         print(json.dumps({"error": f"map not found: {args.map}"}))
         return 1
