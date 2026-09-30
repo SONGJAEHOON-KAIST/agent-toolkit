@@ -1,0 +1,499 @@
+<!-- arch-explorer chat panel. Inserted by bin/chat_server.py as the page is served;
+     never written into the map file. Everything visible lives in a shadow root so the
+     map's CSS and the panel's CSS cannot affect each other. -->
+<style id="arch-chat-layout">
+  /* Padding on html, not a margin on body: a map that sets body { width: 100% }
+     then still shrinks instead of sliding under the panel. */
+  html.archx-open { padding-right: 380px !important; }
+  @media (max-width: 900px) { html.archx-open { padding-right: 0 !important; } }
+  #arch-chat-host { all: initial; }
+</style>
+<div id="arch-chat-host"></div>
+<script>
+(() => {
+  "use strict";
+  const T = {
+    title: "코드 질문",
+    newChat: "새 대화",
+    collapse: "접기",
+    open: "질문",
+    placeholder: "이 코드에 대해 물어보세요 (Enter 전송, Shift+Enter 줄바꿈)",
+    send: "보내기",
+    stop: "멈추기",
+    thinking: "답을 찾는 중…",
+    reading: "읽는 중",
+    empty: "wiki를 근거로 답합니다. 지도에서 박스를 고르면 그 박스에 대해 물을 수 있어요.",
+    ctxOff: "지도 맥락 빼기",
+    ctxOn: "지도 맥락 넣기",
+    noCtx: "지도 맥락 없이 묻는 중",
+    serverDown: "서버에 연결할 수 없습니다. Claude Code에서 /arch-explorer:open 으로 다시 여세요.",
+    cutOff: "답이 끝나기 전에 연결이 끊겼습니다.",
+    stopped: "멈췄습니다.",
+    wikiStale: (n) => `wiki가 코드보다 뒤처져 있습니다 (${n}개 파일 변경). Claude Code에서 /code-wiki:sync 로 갱신하세요.`,
+    wikiMissing: "code-wiki가 없습니다. 답의 근거가 부족할 수 있습니다.",
+    wikiUnknown: (r) => `wiki 상태를 알 수 없습니다: ${r}`,
+    mapStale: (n) => `이 지도를 만든 뒤 ${n}개 파일이 바뀌었습니다.`,
+  };
+
+  // ---- map access (works with any map; events and card ids are optional) ----
+  const getModel = () => {
+    try { return MODEL; } catch (_) { return window.MODEL || null; } // eslint-disable-line no-undef
+  };
+  const model = getModel();
+  const views = model && typeof model === "object" ? model : {};
+  const rootView = Object.keys(views).find((k) => views[k] && views[k].parent == null)
+    || Object.keys(views)[0] || null;
+  const viewFromHash = () => {
+    const h = decodeURIComponent(location.hash.slice(1));
+    return h && views[h] ? h : rootView;
+  };
+
+  const refIndex = new Map(); // "path:line" -> {view, iface}
+  for (const [vid, v] of Object.entries(views)) {
+    for (const f of (v && v.ifaces) || []) {
+      for (const it of f.items || []) {
+        if (typeof it.ref === "string" && it.ref.trim() && !refIndex.has(it.ref.trim())) {
+          refIndex.set(it.ref.trim(), { view: vid, iface: f.id });
+        }
+      }
+    }
+  }
+  const lookupRef = (s) => refIndex.get(String(s).trim().replace(/^\.\//, "")) || null;
+
+  const state = {
+    view: viewFromHash(),
+    node: null,
+    useCtx: true,
+    conv: newId(),
+    busy: null, // AbortController while a question runs
+  };
+  function newId() {
+    return (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2))
+      .replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64);
+  }
+
+  // ---- DOM ----
+  const host = document.getElementById("arch-chat-host");
+  const root = host.attachShadow({ mode: "open" });
+  root.innerHTML = `
+<style>
+  :host { --bg:#ffffff; --fg:#1d1d1f; --muted:#6e6e73; --line:#e3e3e8; --soft:#f4f4f7;
+          --accent:#2f5bd3; --accent-fg:#ffffff; --warn-bg:#fff6e0; --warn-fg:#6b4e00;
+          --err:#b3261e; --code:#f0f0f4; }
+  @media (prefers-color-scheme: dark) {
+    :host { --bg:#1c1c1e; --fg:#f2f2f7; --muted:#a1a1a6; --line:#34343a; --soft:#26262a;
+            --accent:#7c9cff; --accent-fg:#0b0b0d; --warn-bg:#3a2f12; --warn-fg:#f3d88a;
+            --err:#ff8a80; --code:#2c2c30; }
+  }
+  * { box-sizing: border-box; }
+  .panel { position: fixed; top: 0; right: 0; bottom: 0; width: 380px; z-index: 2147483000;
+           display: flex; flex-direction: column; background: var(--bg); color: var(--fg);
+           border-left: 1px solid var(--line); font: 14px/1.5 -apple-system, BlinkMacSystemFont,
+           "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
+  @media (max-width: 900px) { .panel { width: min(100vw, 420px); box-shadow: -8px 0 24px rgba(0,0,0,.18); } }
+  .panel[hidden] { display: none; }
+  header { display: flex; align-items: center; gap: 8px; padding: 10px 12px;
+           border-bottom: 1px solid var(--line); }
+  header h2 { font-size: 14px; margin: 0; flex: 1; }
+  .badge { font-size: 11px; color: var(--muted); border: 1px solid var(--line);
+           border-radius: 999px; padding: 1px 8px; }
+  button { font: inherit; color: inherit; background: var(--soft); border: 1px solid var(--line);
+           border-radius: 8px; padding: 4px 10px; cursor: pointer; }
+  button:hover { border-color: var(--muted); }
+  button:disabled { opacity: .5; cursor: default; }
+  button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+  .banners:empty { display: none; }
+  .banner { font-size: 12px; padding: 8px 12px; background: var(--warn-bg); color: var(--warn-fg);
+            border-bottom: 1px solid var(--line); }
+  .log { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 12px; }
+  .hint { color: var(--muted); font-size: 13px; }
+  .msg { max-width: 100%; overflow-wrap: anywhere; }
+  .msg.user { align-self: flex-end; background: var(--accent); color: var(--accent-fg);
+              padding: 6px 10px; border-radius: 12px 12px 2px 12px; white-space: pre-wrap; max-width: 90%; }
+  .msg.user .ctx { display: block; font-size: 11px; opacity: .8; margin-bottom: 2px; }
+  .msg.bot p { margin: 0 0 8px; }
+  .msg.bot ul, .msg.bot ol { margin: 0 0 8px; padding-left: 20px; }
+  .msg.bot pre { background: var(--code); padding: 8px; border-radius: 6px; overflow-x: auto;
+                 font-size: 12px; margin: 0 0 8px; }
+  .msg.bot code { background: var(--code); padding: 0 4px; border-radius: 4px; font-size: 12.5px; }
+  .msg.bot pre code { background: none; padding: 0; }
+  .msg.bot a { color: var(--accent); }
+  .msg.bot a.ref { text-decoration: underline dotted; cursor: pointer; }
+  .msg.err { color: var(--err); white-space: pre-wrap; font-size: 13px; }
+  .progress { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden;
+              text-overflow: ellipsis; }
+  .ctxrow { display: flex; align-items: center; gap: 6px; padding: 6px 12px 0; font-size: 12px;
+            color: var(--muted); min-height: 24px; }
+  .chip { border: 1px solid var(--line); border-radius: 999px; padding: 1px 4px 1px 8px;
+          display: inline-flex; align-items: center; gap: 4px; max-width: 100%; }
+  .chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chip button { border: 0; background: none; padding: 0 4px; line-height: 1; }
+  form { display: flex; gap: 8px; padding: 8px 12px 12px; align-items: flex-end; }
+  textarea { flex: 1; resize: none; font: inherit; color: var(--fg); background: var(--soft);
+             border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px;
+             min-height: 38px; max-height: 160px; }
+  textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .tab { position: fixed; right: 0; top: 50%; transform: translateY(-50%); z-index: 2147483000;
+         border-radius: 8px 0 0 8px; writing-mode: vertical-rl; padding: 10px 6px;
+         background: var(--accent); color: var(--accent-fg); border-color: var(--accent);
+         font: 13px -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", sans-serif; }
+  .tab[hidden] { display: none; }
+</style>
+<button class="tab" hidden></button>
+<section class="panel" role="complementary">
+  <header>
+    <h2></h2><span class="badge"></span>
+    <button class="new" type="button"></button>
+    <button class="close" type="button" aria-label="">›</button>
+  </header>
+  <div class="banners"></div>
+  <div class="log" aria-live="polite"></div>
+  <div class="ctxrow"></div>
+  <form>
+    <textarea rows="1"></textarea>
+    <button class="primary send" type="submit"></button>
+  </form>
+</section>`;
+
+  const $ = (sel) => root.querySelector(sel);
+  const panel = $(".panel"), tab = $(".tab"), log = $(".log"), banners = $(".banners");
+  const input = $("textarea"), sendBtn = $(".send"), ctxRow = $(".ctxrow");
+  $("h2").textContent = T.title;
+  $(".new").textContent = T.newChat;
+  $(".close").setAttribute("aria-label", T.collapse);
+  $(".close").title = T.collapse;
+  tab.textContent = T.open;
+  input.placeholder = T.placeholder;
+  sendBtn.textContent = T.send;
+
+  // Keys and clicks inside the panel must not reach the map (it binds Esc and clicks).
+  for (const type of ["keydown", "keyup", "keypress", "click", "mousedown", "wheel"]) {
+    host.addEventListener(type, (e) => e.stopPropagation());
+  }
+
+  // ---- open / collapsed ----
+  const store = {
+    get() { try { return localStorage.getItem("archx-collapsed") === "1"; } catch (_) { return false; } },
+    set(v) { try { localStorage.setItem("archx-collapsed", v ? "1" : "0"); } catch (_) {} },
+  };
+  function setOpen(open) {
+    panel.hidden = !open;
+    tab.hidden = open;
+    document.documentElement.classList.toggle("archx-open", open);
+    store.set(!open);
+    window.dispatchEvent(new Event("resize")); // let the map re-fit if it listens
+  }
+  $(".close").addEventListener("click", () => setOpen(false));
+  tab.addEventListener("click", () => { setOpen(true); input.focus(); });
+  setOpen(!store.get());
+
+  // ---- context chip ----
+  const nodeById = (vid, nid) => ((views[vid] && views[vid].nodes) || []).find((n) => n.id === nid) || null;
+  function renderCtx() {
+    ctxRow.textContent = "";
+    const v = state.view && views[state.view];
+    if (!v) return;
+    if (!state.useCtx) {
+      const b = document.createElement("button");
+      b.type = "button"; b.textContent = T.ctxOn;
+      b.addEventListener("click", () => { state.useCtx = true; renderCtx(); });
+      ctxRow.append(T.noCtx + " · ", b);
+      return;
+    }
+    const chip = document.createElement("span");
+    chip.className = "chip";
+    const label = document.createElement("span");
+    const n = state.node && nodeById(state.view, state.node);
+    label.textContent = (v.title || state.view) + (n ? " › " + (n.title || n.id) : "");
+    const x = document.createElement("button");
+    x.type = "button"; x.textContent = "×"; x.title = T.ctxOff; x.setAttribute("aria-label", T.ctxOff);
+    x.addEventListener("click", () => { state.useCtx = false; renderCtx(); });
+    chip.append(label, x);
+    ctxRow.append(chip);
+  }
+  function setView(vid) {
+    if (!vid || !views[vid] || vid === state.view) return;
+    state.view = vid; state.node = null; renderCtx();
+  }
+  window.addEventListener("hashchange", () => setView(viewFromHash()));
+  window.addEventListener("arch:view", (e) => setView(e.detail && e.detail.view));
+  window.addEventListener("arch:select", (e) => {
+    const d = e.detail || {};
+    if (d.view && views[d.view]) state.view = d.view;
+    state.node = d.node || null;
+    renderCtx();
+  });
+  renderCtx();
+
+  function contextPayload() {
+    const v = state.useCtx && state.view && views[state.view];
+    if (!v) return null;
+    const n = state.node && nodeById(state.view, state.node);
+    return {
+      view: { id: state.view, title: v.title || "", hint: v.hint || "" },
+      node: n ? { id: n.id, title: n.title || "", lines: (n.lines || []).slice(0, 6) } : null,
+      ifaces: (v.ifaces || []).slice(0, 30).map((f) => ({
+        title: f.title, from: f.from, to: f.to,
+        items: (f.items || []).slice(0, 4).map((it) => ({ sig: it.sig, ref: it.ref })),
+      })),
+    };
+  }
+
+  // ---- jump to an interface card ----
+  function jump(view, iface) {
+    const show = (smooth) => {
+      const el = document.getElementById(`card-${view}-${iface}`);
+      if (!el) return;
+      el.scrollIntoView({ behavior: smooth ? "smooth" : "auto", block: "center" });
+      const prev = el.style.outline;
+      el.style.outline = "3px solid #2f5bd3";
+      setTimeout(() => { el.style.outline = prev; }, 1600);
+    };
+    if (view === viewFromHash()) { show(true); return; }
+    // Another layer: wait until the map has drawn it, then scroll without
+    // animation — re-rendering the cards cancels a smooth scroll midway.
+    let done = false;
+    const after = () => {
+      if (done) return;
+      done = true;
+      window.removeEventListener("arch:view", after);
+      window.removeEventListener("hashchange", after);
+      setTimeout(() => show(false), 50); // after the map's own handlers have drawn
+    };
+    window.addEventListener("arch:view", after);
+    window.addEventListener("hashchange", after);
+    setTimeout(after, 500);
+    location.hash = view;
+  }
+
+  // ---- safe markdown subset: everything is escaped first ----
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+  const REF = /[\w.\-/]+\.[A-Za-z0-9]+(?::\d+(?:-\d+)?|::[\w.]+)/;
+  function refLink(text, target) {
+    const hit = lookupRef(target) || lookupRef(String(target).replace(/-\d+$/, ""));
+    if (!hit) return null;
+    return `<a class="ref" href="#" data-view="${esc(hit.view)}" data-iface="${esc(hit.iface)}">${text}</a>`;
+  }
+  function inline(src) {
+    const TOKEN = new RegExp(
+      "(`[^`\\n]+`)|(\\[[^\\]\\n]+\\]\\([^)\\s]+\\))|(\\*\\*[^*\\n]+\\*\\*)|(" + REF.source + ")", "g");
+    let out = "", last = 0, m;
+    while ((m = TOKEN.exec(src))) {
+      out += esc(src.slice(last, m.index));
+      last = TOKEN.lastIndex;
+      if (m[1]) {
+        const body = m[1].slice(1, -1);
+        const code = `<code>${esc(body)}</code>`;
+        out += refLink(code, body) || code;
+      } else if (m[2]) {
+        const [, text, url] = m[2].match(/^\[([^\]]+)\]\(([^)\s]+)\)$/);
+        const ref = refLink(esc(text), url);
+        if (ref) out += ref;
+        else if (/^https?:\/\//i.test(url)) out += `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(text)}</a>`;
+        else out += `${esc(text)} (<code>${esc(url)}</code>)`;
+      } else if (m[3]) {
+        out += `<strong>${inline(m[3].slice(2, -2))}</strong>`;
+      } else {
+        out += refLink(esc(m[4]), m[4]) || esc(m[4]);
+      }
+    }
+    return out + esc(src.slice(last));
+  }
+  function blocks(text) {
+    let html = "", para = [], list = null;
+    const flushPara = () => { if (para.length) { html += `<p>${para.map(inline).join("<br>")}</p>`; para = []; } };
+    const flushList = () => {
+      if (!list) return;
+      const start = list.start > 1 ? ` start="${list.start}"` : ""; // keep numbering across paragraphs
+      html += `<${list.tag}${start}>${list.items.map((i) => `<li>${inline(i)}</li>`).join("")}</${list.tag}>`;
+      list = null;
+    };
+    for (const line of text.split("\n")) {
+      const ul = line.match(/^\s*[-*]\s+(.*)$/), ol = line.match(/^\s*(\d+)[.)]\s+(.*)$/), h = line.match(/^#{1,6}\s+(.*)$/);
+      if (ul || ol) {
+        flushPara();
+        const tag = ul ? "ul" : "ol";
+        if (!list || list.tag !== tag) { flushList(); list = { tag, items: [], start: ol ? Number(ol[1]) : 1 }; }
+        list.items.push(ul ? ul[1] : ol[2]);
+      } else if (h) {
+        flushPara(); flushList(); html += `<p><strong>${inline(h[1])}</strong></p>`;
+      } else if (!line.trim()) {
+        flushPara(); flushList();
+      } else {
+        flushList(); para.push(line);
+      }
+    }
+    flushPara(); flushList();
+    return html;
+  }
+  function markdown(text) {
+    let html = "", last = 0, m;
+    const FENCE = /```[^\n]*\n?([\s\S]*?)(?:```|$)/g;
+    while ((m = FENCE.exec(text))) {
+      html += blocks(text.slice(last, m.index));
+      html += `<pre><code>${esc(m[1].replace(/\n$/, ""))}</code></pre>`;
+      last = FENCE.lastIndex;
+      if (m[0].length === 0) FENCE.lastIndex++;
+    }
+    return html + blocks(text.slice(last));
+  }
+  log.addEventListener("click", (e) => {
+    const a = e.target.closest && e.target.closest("a.ref");
+    if (!a) return;
+    e.preventDefault();
+    jump(a.dataset.view, a.dataset.iface);
+  });
+
+  // ---- log ----
+  function hint() {
+    log.textContent = "";
+    const p = document.createElement("div");
+    p.className = "hint"; p.textContent = T.empty;
+    log.append(p);
+  }
+  function add(cls, text) {
+    const hintEl = log.querySelector(".hint");
+    if (hintEl) hintEl.remove();
+    const el = document.createElement("div");
+    el.className = "msg " + cls;
+    if (text != null) el.textContent = text;
+    log.append(el);
+    log.scrollTop = log.scrollHeight;
+    return el;
+  }
+  hint();
+
+  // ---- status banners ----
+  async function refreshStatus() {
+    banners.textContent = "";
+    const say = (msg) => { const d = document.createElement("div"); d.className = "banner"; d.textContent = msg; banners.append(d); };
+    try {
+      const r = await fetch("/api/status", { cache: "no-store" });
+      if (!r.ok) throw new Error(String(r.status));
+      const s = await r.json();
+      $(".badge").textContent = s.engine || "";
+      const w = s.wiki || {}, m = s.map || {};
+      if (w.state === "stale") say(T.wikiStale(w.changed));
+      else if (w.state === "missing") say(T.wikiMissing);
+      else if (w.state === "unknown") say(T.wikiUnknown(w.reason || ""));
+      if (m.state === "stale") say(T.mapStale(m.changed));
+    } catch (_) {
+      say(T.serverDown);
+    }
+  }
+  refreshStatus();
+
+  // ---- ask ----
+  function setBusy(ctrl) {
+    state.busy = ctrl;
+    sendBtn.textContent = ctrl ? T.stop : T.send;
+    sendBtn.classList.toggle("primary", !ctrl);
+    input.disabled = !!ctrl;
+    $(".new").disabled = !!ctrl;
+  }
+
+  async function ask(question) {
+    const ctx = contextPayload();
+    const u = add("user");
+    if (ctx) {
+      const c = document.createElement("span");
+      c.className = "ctx";
+      c.textContent = ctx.view.title + (ctx.node ? " › " + (ctx.node.title || ctx.node.id) : "");
+      u.append(c);
+    }
+    u.append(document.createTextNode(question));
+    const bot = add("bot");
+    const progress = document.createElement("div");
+    progress.className = "progress";
+    progress.textContent = T.thinking;
+    bot.append(progress);
+    const body = document.createElement("div");
+    bot.append(body);
+
+    const ctrl = new AbortController();
+    setBusy(ctrl);
+    let text = "", ended = false, frame = 0;
+    const paint = () => { frame = 0; body.innerHTML = markdown(text); log.scrollTop = log.scrollHeight; };
+    const fail = (msg) => { ended = true; progress.remove(); add("err", msg); };
+    try {
+      const r = await fetch("/api/ask", {
+        method: "POST", signal: ctrl.signal,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversation: state.conv, question, context: ctx }),
+      });
+      if (!r.ok) {
+        let msg = `HTTP ${r.status}`;
+        try { msg = (await r.json()).error || msg; } catch (_) {}
+        fail(msg);
+        return;
+      }
+      const reader = r.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let nl;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, nl); buf = buf.slice(nl + 1);
+          if (!line.trim()) continue;
+          let ev; try { ev = JSON.parse(line); } catch (_) { continue; }
+          if (ev.type === "delta") {
+            text += ev.text;
+            if (!frame) frame = requestAnimationFrame(paint);
+          } else if (ev.type === "tool") {
+            progress.textContent = `${T.reading}: ${ev.detail || ev.name}`;
+          } else if (ev.type === "note") {
+            progress.textContent = ev.text.trim().split("\n")[0];
+          } else if (ev.type === "final") {
+            ended = true;
+            if (ev.text) text = ev.text;
+            progress.remove();
+            paint();
+          } else if (ev.type === "error") {
+            fail(ev.message);
+          }
+        }
+      }
+      if (!ended) fail(T.cutOff);
+    } catch (e) {
+      if (e.name === "AbortError") fail(T.stopped);
+      else fail(T.serverDown);
+    } finally {
+      setBusy(null);
+      input.focus();
+    }
+  }
+
+  $("form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    if (state.busy) { state.busy.abort(); return; }
+    const q = input.value.trim();
+    if (!q) return;
+    input.value = "";
+    autosize();
+    ask(q);
+  });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
+      e.preventDefault();
+      $("form").requestSubmit();
+    }
+  });
+  const autosize = () => { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 160) + "px"; };
+  input.addEventListener("input", autosize);
+
+  $(".new").addEventListener("click", async () => {
+    const old = state.conv;
+    state.conv = newId();
+    hint();
+    try {
+      await fetch("/api/reset", { method: "POST", headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ conversation: old }) });
+    } catch (_) {}
+    refreshStatus();
+  });
+})();
+</script>
