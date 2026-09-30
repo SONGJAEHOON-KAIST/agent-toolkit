@@ -17,10 +17,25 @@ no way to tell them apart.
 
 ## Before you start
 
+`<plugin>` below is this plugin's root: two levels above this skill's base
+directory.
+
 Settle two things with the user if they are not already clear:
 
 - **Scope** — the whole repo, or one service/directory. This sets what L0 is.
 - **Output path** — default `docs/architecture/index.html`.
+
+Then check whether a current map already exists — **skip this when
+`/arch-explorer:open` sent you here**, since it has already asked:
+
+```bash
+python3 "<plugin>/bin/status.py" check --root "$(git rev-parse --show-toplevel)" --map <output path>
+```
+
+If `map.state` is `fresh`, the map was built from the current code. Ask
+"The map is up to date (built from `<map.sha, short>`). Open it, or rebuild
+anyway?" — on *open*, follow `/arch-explorer:open` (the sibling
+`open/SKILL.md`) and stop here. Any other state: build.
 
 ## 1. Read the code, then build the model
 
@@ -69,6 +84,27 @@ Interaction contract:
 - Click an arrow → jump to its card. Click a box → filter the cards to the ones
   touching that box.
 
+The chat panel that `/arch-explorer:open` adds reads the map through these
+hooks, so render them exactly:
+
+- On every layer change, `window.dispatchEvent(new CustomEvent('arch:view',
+  {detail: {view: <viewId>}}))`.
+- On every box click, `window.dispatchEvent(new CustomEvent('arch:select',
+  {detail: {view: <viewId>, node: <nodeId>}}))`.
+- Each interface card's element id is `card-<viewId>-<ifaceId>`.
+- Layer changes also follow `hashchange`, so setting `location.hash` from
+  outside opens that layer.
+- Leave `html` and `body` without a width, and size everything inside
+  against its parent (`width: 100%`, `max-width`) — never `100vw`, and no
+  `position: fixed` full-width container. The panel takes its space as right
+  padding on `html`, and only a layout that follows its parent shrinks into
+  what is left.
+- The URL hash is exactly the viewId, and `MODEL` is a top-level `const` in
+  a classic `<script>` (not a module, not inside a function), so the panel
+  can read it.
+- Each item's `ref` is one repo-relative `path:line` — the panel links a
+  citation to a card only when it matches a `ref` exactly.
+
 Keep **all** structure data in one declarative object at the top of the file,
 separate from the render code, so that updating the map means editing data:
 
@@ -84,6 +120,10 @@ const MODEL = {
 }
 ```
 
+`ifaces[].from`/`to` are node ids, the same as their edge's. Extra
+per-layer fields (such as `notes`) are fine; the panel reads only `title`,
+`hint`, `parent`, `nodes`, `ifaces` and the hash.
+
 Place boxes by hand — hand-set coordinates beat an auto-layout for a diagram
 that is read many times and edited rarely. Edge label positions are worth
 auto-placing (search for empty space near the midpoint), since they move
@@ -97,6 +137,9 @@ it cut through a box.
   every `drill` points at a view that exists, every `edge.iface` has a matching
   `ifaces` entry, and every `iface` is referenced by some edge. Check this by
   script, not by eye.
+- **Panel hooks** — in the browser, clicking a box fires `arch:select`,
+  drilling fires `arch:view`, and every `ifaces` entry of the open layer has
+  an element `card-<viewId>-<ifaceId>`.
 - **Open it** from `file://` and walk every layer: drill into each box that has
   `drill`, come back up, and confirm the hash round-trips.
 - **Read the diagram as a picture** — labels overlapping each other, labels
@@ -105,8 +148,30 @@ it cut through a box.
 - **Spot-check the facts** — pick a few cards and confirm the `file:line` still
   says what the card claims.
 
-Write a short `README.md` next to the file: how to open it, the layer tree, and
+Write a short `README.md` next to the file: how to open it (`file://`, or
+`/arch-explorer:open` for the version with a chat panel), the layer tree, and
 where to edit (the `MODEL` object). Whoever updates this in six months needs it.
+
+## 5. Record the build, then offer to open
+
+Record which commit and scope the map was built from. `/arch-explorer:open`
+and the next build read this to tell whether the map is current:
+
+```bash
+python3 "<plugin>/bin/status.py" record --root "$(git rev-parse --show-toplevel)" \
+  --map <output path> --scope <scope path>   # repeat --scope; "." for the whole repo
+```
+
+Scope is what makes the map stale when it changes, so pass every path the
+map's cards cite — a card citing `pyproject.toml` needs it in scope too.
+
+This writes `arch-explorer.json` next to the HTML; commit it with the map. If
+it reports `"dirty": true`, the build included uncommitted changes, and the map
+counts as of unknown age until rebuilt from a commit — say so.
+
+Then, **unless `/arch-explorer:open` sent you here** (return to it instead),
+ask "Open it now, with the chat panel?" On yes, follow `/arch-explorer:open`
+and skip its map check — the map was just built.
 
 ## Common failure modes
 
