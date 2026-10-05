@@ -33,7 +33,7 @@ repository, stop and say that freshness checks and the chat need one.
 | `--engine` | answer with this engine, this time only; the saved default is untouched |
 | `--reset-engine` | forget the saved default engine and choose again (§3) |
 | `--port` | fixed port for the server; default: any free port |
-| `--wiki` | a directory, relative to the repo root, that holds a code-wiki (`<dir>/wiki/`, `<dir>/.code-wiki/`) — for a monorepo whose wikis sit next to each sub-project. Repeatable. Default: the wiki at the repo root |
+| `--wiki` | a directory, relative to the repo root, that holds a code-wiki (`<dir>/wiki/`, `<dir>/.code-wiki/`; or the pages directory named by `<dir>/.code-wiki-dir`) — for a monorepo whose wikis sit next to each sub-project. Repeatable. Default: the wiki at the repo root |
 
 Anything else, ask about rather than guess.
 

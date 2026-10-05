@@ -5,6 +5,8 @@ description: Generates a wiki page (Markdown) for a leaf source folder — i.e. 
 
 # generate-leaf-page
 
+> **Wiki directory.** `wiki/` in this skill means the project's wiki directory — `wiki` unless the project's `.code-wiki-dir` names another location (resolve with `python3 "${CLAUDE_PLUGIN_ROOT}/bin/wiki-dir.py" --project-root "$(pwd)"`). Target paths handed to you by the command already include it; use them as given. Relative links between pages do not depend on it.
+
 Use this skill to generate one leaf folder's wiki page. The caller (a code-wiki command) passes the folder details and the page's target path; you produce the page content and write it.
 
 ## When to use

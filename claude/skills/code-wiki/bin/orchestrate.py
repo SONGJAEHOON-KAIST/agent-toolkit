@@ -86,6 +86,7 @@ from pathlib import Path
 # Make the lib package importable regardless of CWD.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lib import config as cfg  # noqa: E402
+from lib import wiki_path as wp  # noqa: E402
 
 
 SKILL_LEAF = "code-wiki:generate-leaf-page"
@@ -213,6 +214,7 @@ def main() -> int:
     args = parser.parse_args()
 
     project_root = args.project_root.resolve()
+    wp.configure(project_root)
 
     # Load the work list (stdin or file)
     try:

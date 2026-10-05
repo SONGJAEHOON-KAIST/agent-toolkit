@@ -44,6 +44,11 @@ SAMPLE = 10
 # Never counted as source changes: they are outputs, not inputs.
 ALWAYS_EXCLUDED = ("wiki/", ".code-wiki/")
 DEFAULT_WIKI = "."
+# code-wiki keeps its pages in `<dir>/wiki/` unless `<dir>/.code-wiki-dir` (committed,
+# one line, e.g. `docs/codewiki`) moves them. This file is code-wiki's contract;
+# arch-explorer reads it here rather than importing code-wiki (each tool is self-contained).
+WIKI_DIR_FILE = ".code-wiki-dir"
+DEFAULT_PAGES = "wiki"
 # Worst first: the combined state of several wikis is the worst of them.
 WIKI_RANK = {"missing": 3, "unknown": 2, "stale": 1, "fresh": 0}
 
@@ -96,9 +101,32 @@ def _under(dir_: str, rel: str) -> str:
     return rel if dir_ == "." else f"{dir_}/{rel}"
 
 
-def wiki_location(dir_: str) -> str:
-    """Where the pages of the wiki held by `dir_` live, repo-relative: `web/api/wiki/`."""
-    return _under(dir_, "wiki") + "/"
+def wiki_pages_dir(root: Path | None, dir_: str) -> str:
+    """The pages directory of the wiki held by `dir_`, relative to `dir_`: `wiki`
+    unless `<dir_>/.code-wiki-dir` names a safe relative path (then that path)."""
+    if root is None:
+        return DEFAULT_PAGES
+    f = Path(root) / dir_ / WIKI_DIR_FILE
+    try:
+        lines = [l.strip() for l in f.read_text(encoding="utf-8").splitlines()
+                 if l.strip() and not l.lstrip().startswith("#")]
+    except OSError:
+        return DEFAULT_PAGES
+    if not lines:
+        return DEFAULT_PAGES
+    value = lines[0].replace("\\", "/")
+    segs = value.rstrip("/").split("/")
+    if (value.startswith("/") or (len(value) > 1 and value[1] == ":")
+            or any(seg in ("", ".", "..") for seg in segs)
+            or segs[0] in (".code-wiki", ".git")):
+        return DEFAULT_PAGES  # unsafe: fall back, code-wiki itself refuses it
+    return "/".join(segs)
+
+
+def wiki_location(dir_: str, root: Path | None = None) -> str:
+    """Where the pages of the wiki held by `dir_` live, repo-relative: `web/api/wiki/`.
+    Pass `root` to honour a `.code-wiki-dir` (e.g. `docs/codewiki/`)."""
+    return _under(dir_, wiki_pages_dir(root, dir_)) + "/"
 
 
 def normalize_wiki_dirs(root: Path, dirs: list[str] | None) -> list[str]:
@@ -118,11 +146,11 @@ def normalize_wiki_dirs(root: Path, dirs: list[str] | None) -> list[str]:
     return out
 
 
-def wiki_excludes(wiki_dirs: list[str] | None) -> list[str]:
+def wiki_excludes(wiki_dirs: list[str] | None, root: Path | None = None) -> list[str]:
     """The wiki output directories of every wiki: never counted as source changes."""
     out = []
     for d in wiki_dirs or [DEFAULT_WIKI]:
-        out += [_under(d, "wiki/") + "/", _under(d, ".code-wiki/") + "/"]
+        out += [wiki_location(d, root), _under(d, ".code-wiki/") + "/"]
     return out
 
 
@@ -154,7 +182,7 @@ def map_status(root: Path, map_path: Path, wiki_dirs: list[str] | None = None) -
     if not isinstance(sha, str) or not _is_commit(root, sha):
         return {"state": "unknown", "reason": f"build commit {sha!r} not found"}
     scope = meta.get("scope") or ["."]
-    exclude = list(ALWAYS_EXCLUDED) + wiki_excludes(wiki_dirs)
+    exclude = list(ALWAYS_EXCLUDED) + wiki_excludes(wiki_dirs, root)
     out_dir = _rel(root, map_path.parent)
     if out_dir and out_dir != ".":
         exclude.append(out_dir)
@@ -193,8 +221,8 @@ def record(root: Path, map_path: Path, scope: list[str]) -> dict:
 
 # ---------------------------------------------------------------- wiki
 
-def _source_roots(base: Path) -> list[str] | None:
-    """source_roots from <base>/wiki/config.yaml, relative to `base`.
+def _source_roots(base: Path, pages: str = DEFAULT_PAGES) -> list[str] | None:
+    """source_roots from <base>/<pages>/config.yaml, relative to `base`.
 
     None when PyYAML is absent or the file is odd.
     """
@@ -203,7 +231,7 @@ def _source_roots(base: Path) -> list[str] | None:
     except ImportError:
         return None
     try:
-        data = yaml.safe_load((base / "wiki/config.yaml").read_text(encoding="utf-8"))
+        data = yaml.safe_load((base / pages / "config.yaml").read_text(encoding="utf-8"))
     except Exception:
         return None
     entries = data.get("source_roots") if isinstance(data, dict) else None
@@ -226,7 +254,8 @@ def wiki_status(root: Path, wiki_dir: str = DEFAULT_WIKI) -> dict:
     before asking git, which reports paths from the root.
     """
     base_dir = root / wiki_dir
-    if not (base_dir / "wiki/config.yaml").is_file():
+    pages = wiki_pages_dir(root, wiki_dir)
+    if not (base_dir / pages / "config.yaml").is_file():
         return {"state": "missing"}
     state_path = base_dir / ".code-wiki/state.json"
     base, basis = None, None
@@ -246,9 +275,9 @@ def wiki_status(root: Path, wiki_dir: str = DEFAULT_WIKI) -> dict:
         return {"state": "unknown", "reason": "no ingest commit recorded or inferable"}
     if not _is_commit(root, base):
         return {"state": "unknown", "reason": f"ingest commit {base} not found"}
-    roots = _source_roots(base_dir)
+    roots = _source_roots(base_dir, pages)
     scope = [_under(wiki_dir, r) for r in roots] if roots else [wiki_dir]
-    changed = _changed(root, base, scope, list(ALWAYS_EXCLUDED) + wiki_excludes([wiki_dir]))
+    changed = _changed(root, base, scope, list(ALWAYS_EXCLUDED) + wiki_excludes([wiki_dir], root))
     if changed is None:
         return {"state": "unknown", "reason": "git diff failed"}
     result = _changes_result(changed, base)
@@ -258,12 +287,18 @@ def wiki_status(root: Path, wiki_dir: str = DEFAULT_WIKI) -> dict:
 
 
 def wiki_candidates(root: Path) -> list[str]:
-    """Directories below the root holding a committed code-wiki (`<dir>/wiki/config.yaml`)."""
+    """Directories below the root holding a committed code-wiki: `<dir>/wiki/config.yaml`,
+    or `<dir>/.code-wiki-dir` naming where `<dir>`'s pages live."""
     out = _git(root, "ls-files", "--", ":(glob)**/wiki/config.yaml") or ""
     dirs = []
     for f in out.splitlines():
         d = f[: -len("/wiki/config.yaml")] if f.endswith("/wiki/config.yaml") else ""
         if d and d not in dirs:
+            dirs.append(d)
+    moved = _git(root, "ls-files", "--", f":(glob)**/{WIKI_DIR_FILE}") or ""
+    for f in moved.splitlines():
+        d = f[: -len("/" + WIKI_DIR_FILE)] if f.endswith("/" + WIKI_DIR_FILE) else ""
+        if d and d not in dirs and (root / d / wiki_pages_dir(root, d) / "config.yaml").is_file():
             dirs.append(d)
     return dirs
 
@@ -271,9 +306,14 @@ def wiki_candidates(root: Path) -> list[str]:
 def wikis_status(root: Path, wiki_dirs: list[str] | None = None) -> tuple[dict, list[dict]]:
     """(combined, per-wiki). With one wiki the combined state is that wiki's own."""
     dirs = wiki_dirs or [DEFAULT_WIKI]
-    each = [{"dir": d, **wiki_status(root, d)} for d in dirs]
+    each = []
+    for d in dirs:
+        entry = {"dir": d, **wiki_status(root, d)}
+        if wiki_pages_dir(root, d) != DEFAULT_PAGES:
+            entry["pages"] = wiki_location(d, root)  # only when moved: default output unchanged
+        each.append(entry)
     if len(each) == 1:
-        combined = {k: v for k, v in each[0].items() if k != "dir"}
+        combined = {k: v for k, v in each[0].items() if k not in ("dir", "pages")}
     else:
         worst = max(each, key=lambda w: WIKI_RANK[w["state"]])["state"]
         combined = {"state": worst}

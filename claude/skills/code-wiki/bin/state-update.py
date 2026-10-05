@@ -41,6 +41,7 @@ from lib import config as cfg  # noqa: E402
 from lib import hashing  # noqa: E402
 from lib import links as links_lib  # noqa: E402
 from lib import state as st  # noqa: E402
+from lib import wiki_path as wp  # noqa: E402
 
 
 def main() -> int:
@@ -50,6 +51,7 @@ def main() -> int:
     args = parser.parse_args()
 
     project_root = args.project_root.resolve()
+    wp.configure(project_root)
 
     try:
         report = json.load(sys.stdin)

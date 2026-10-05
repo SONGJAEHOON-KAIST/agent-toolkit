@@ -295,3 +295,51 @@ class CliTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MovedWikiTest(unittest.TestCase):
+    """`.code-wiki-dir` moves a wiki's pages, e.g. because the repo's own `wiki/`
+    belongs to another documentation system."""
+
+    def setUp(self):
+        self.repo = Repo()
+        self.repo.write("engine/a.py")
+        self.repo.write("wiki/index.md", "the project's own wiki\n")
+        self.repo.write(".code-wiki-dir", "# code-wiki location\ndocs/codewiki\n")
+        self.repo.write("docs/codewiki/config.yaml", CONFIG.replace("src", "engine"))
+        self.repo.write("docs/codewiki/engine/index.md")
+        self.sha = self.repo.commit()
+
+    def tearDown(self):
+        self.repo.cleanup()
+
+    def test_pages_dir_and_location(self):
+        self.assertEqual(status.wiki_pages_dir(self.repo.root, "."), "docs/codewiki")
+        self.assertEqual(status.wiki_location(".", self.repo.root), "docs/codewiki/")
+        self.assertEqual(status.wiki_location("."), "wiki/")  # no root: old behaviour
+
+    def test_status_reads_moved_config_and_reports_pages(self):
+        self.repo.write(".code-wiki/state.json", wiki_state(self.sha))
+        combined, each = status.wikis_status(self.repo.root)
+        self.assertEqual(combined["state"], "fresh")
+        self.assertEqual(each[0]["pages"], "docs/codewiki/")
+        self.assertNotIn("pages", combined)
+
+    def test_moved_pages_are_not_source_changes(self):
+        self.repo.write(".code-wiki/state.json", wiki_state(self.sha))
+        self.repo.write("docs/codewiki/engine/index.md", "regenerated\n")
+        self.repo.commit()
+        self.assertEqual(status.wiki_status(self.repo.root, ".")["state"], "fresh")
+        self.repo.write("engine/b.py")
+        self.repo.commit()
+        self.assertEqual(status.wiki_status(self.repo.root, ".")["state"], "stale")
+
+    def test_unsafe_dir_file_falls_back_to_default(self):
+        self.repo.write(".code-wiki-dir", "../outside\n")
+        self.assertEqual(status.wiki_pages_dir(self.repo.root, "."), "wiki")
+
+    def test_subdir_candidate_found_through_dir_file(self):
+        self.repo.write("svc/.code-wiki-dir", "kb\n")
+        self.repo.write("svc/kb/config.yaml", CONFIG)
+        self.repo.commit()
+        self.assertIn("svc", status.wiki_candidates(self.repo.root))

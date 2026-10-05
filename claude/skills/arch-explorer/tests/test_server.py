@@ -54,6 +54,13 @@ class PromptTest(unittest.TestCase):
         self.assertEqual(chat_server.build_prompt("q", None, {"state": "fresh"}, wikis),
                          "question:\nq")
 
+    def test_moved_root_wiki_is_located_for_the_engine(self):
+        """`.code-wiki-dir` moved the root wiki: the engine must not look in `wiki/`."""
+        wikis = [{"dir": ".", "pages": "docs/codewiki/", "state": "fresh"}]
+        p = chat_server.build_prompt("q", None, {"state": "fresh"}, wikis)
+        self.assertIn("[wikis] code-wiki locations, relative to the repository root: "
+                      "`docs/codewiki/`", p)
+
     def test_no_context(self):
         p = chat_server.build_prompt("q", None, {"state": "fresh"})
         self.assertEqual(p, "question:\nq")

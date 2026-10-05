@@ -15,6 +15,8 @@ Links are classified as:
 
 from __future__ import annotations
 
+from . import wiki_path as wp
+
 import os.path
 from dataclasses import dataclass
 from pathlib import PurePosixPath
@@ -134,7 +136,7 @@ def _classify(
     resolved = resolved.replace(os.sep, "/")
 
     # Classify
-    if resolved == "wiki" or resolved.startswith("wiki/"):
+    if wp.is_wiki_path(resolved):
         return "wiki", resolved
     for root in source_roots:
         root_norm = root.rstrip("/")

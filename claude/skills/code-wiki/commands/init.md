@@ -14,6 +14,12 @@ The current working directory should be the user's project root — the director
 
 If they decline, stop here.
 
+**If `wiki/` already exists and is not a code-wiki** (no `wiki/config.yaml` with `source_roots:`), or the user asks for another location, ask:
+
+> "`wiki/` is already used in this project. Where should the code wiki live instead? (e.g. `docs/codewiki`)"
+
+Pass the answer to the init script as `--wiki-dir <path>`. The script records it in `.code-wiki-dir` (commit that file — every later command reads it) and refuses `..`, absolute paths and `.code-wiki/`. In the remaining steps read `wiki/` as that path.
+
 ## Step 2: Ask for source roots
 
 > "Which directories contain source code? Enter comma-separated paths relative to the project root (e.g. `src` or `apps/web/src, packages/lib`)."
@@ -21,7 +27,7 @@ If they decline, stop here.
 Validate the user's response:
 - Reject empty input.
 - Reject `.` as a source root (one cannot wikify the entire project; pick a sub-directory).
-- Reject `wiki` and `.code-wiki` as source roots (reserved by code-wiki).
+- Reject the wiki directory (`wiki`, or the `--wiki-dir` you chose) and `.code-wiki` as source roots (reserved by code-wiki), and any source root that contains the wiki directory.
 - The Python script will run final validation (existence as a directory, no nesting between roots) — surface its error message verbatim if validation fails.
 
 ## Step 3: Ask for wiki language
@@ -43,7 +49,8 @@ python3 "${CLAUDE_PLUGIN_ROOT}/bin/init.py" \
     --project-root "$(pwd)" \
     --source-roots "<comma-separated source roots>" \
     --language "<language>" \
-    --language-hints "<comma-separated hints, or empty>"
+    --language-hints "<comma-separated hints, or empty>" \
+    [--wiki-dir "<path>"]   # only when the wiki must not live at wiki/
 ```
 
 The script will:

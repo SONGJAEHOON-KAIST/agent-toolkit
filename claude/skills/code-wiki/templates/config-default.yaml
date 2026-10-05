@@ -13,7 +13,8 @@ version: 1
 #
 # Validation rules (enforced at init and on every load):
 #   - Must be a relative path within the project, not absolute, not empty, not "."
-#   - Cannot be "wiki" or ".code-wiki" (reserved by the plugin)
+#   - Cannot be inside the wiki directory ("wiki", or the one named in .code-wiki-dir)
+#     or ".code-wiki", and cannot contain the wiki directory (reserved by the plugin)
 #   - Source roots cannot nest inside one another (e.g. "src" and "src/api" together)
 #   - Each path must exist as a directory at the time of operation
 #

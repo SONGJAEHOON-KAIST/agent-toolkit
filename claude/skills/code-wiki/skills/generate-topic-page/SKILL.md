@@ -5,6 +5,8 @@ description: Generates a topic page (Markdown) capturing a cross-cutting concern
 
 # generate-topic-page
 
+> **Wiki directory.** `wiki/` in this skill means the project's wiki directory — `wiki` unless the project's `.code-wiki-dir` names another location (resolve with `python3 "${CLAUDE_PLUGIN_ROOT}/bin/wiki-dir.py" --project-root "$(pwd)"`). Target paths handed to you by the command already include it; use them as given. Relative links between pages do not depend on it.
+
 Use this skill to produce one topic page at `wiki/topics/<name>.md`. A topic page captures a cross-cutting concern: a behavior that lives in multiple folders and benefits from a single, coherent narrative trace.
 
 ## When to use

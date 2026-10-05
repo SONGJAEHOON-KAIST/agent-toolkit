@@ -64,6 +64,7 @@ def main() -> int:
     args = parser.parse_args()
 
     project_root = args.project_root.resolve()
+    wp.configure(project_root)
 
     findings: list[Finding] = []
 
@@ -75,7 +76,7 @@ def main() -> int:
         findings.append(Finding(
             rule="config-invalid",
             severity="error",
-            path="wiki/config.yaml",
+            path=cfg.config_path().as_posix(),
             detail=str(e),
         ))
         _emit(findings)
@@ -132,9 +133,9 @@ def _apply_fixes(
         if target.is_file():
             target.unlink()
             deleted.append(f.path)
-            # Prune empty ancestors up to wiki/.
+            # Prune empty ancestors up to the wiki dir.
             parent = target.parent
-            wiki_root = (project_root / "wiki").resolve()
+            wiki_root = (project_root / str(wp.WIKI_DIR)).resolve()
             while parent != wiki_root and parent.is_dir() and not any(parent.iterdir()):
                 parent.rmdir()
                 parent = parent.parent
@@ -167,13 +168,13 @@ def _emit(findings: list[Finding]) -> None:
 
 
 def _all_wiki_pages(project_root: Path) -> list[Path]:
-    """All `.md` files under `wiki/`, EXCEPT `wiki/CLAUDE.md` (user-curated)."""
-    wiki_root = project_root / "wiki"
+    """All `.md` files under the wiki dir, EXCEPT its `CLAUDE.md` (user-curated)."""
+    wiki_root = project_root / str(wp.WIKI_DIR)
     if not wiki_root.is_dir():
         return []
     return [
         p for p in sorted(wiki_root.rglob("*.md"))
-        if p.relative_to(project_root).as_posix() != "wiki/CLAUDE.md"
+        if p.relative_to(project_root).as_posix() != f"{wp.WIKI_DIR}/CLAUDE.md"
     ]
 
 
@@ -274,7 +275,7 @@ def _rule_phantom_wiki(
     for page in _all_wiki_pages(project_root):
         relpath = page.relative_to(project_root).as_posix()
         # Topic pages don't have source folders; skip.
-        if relpath.startswith("wiki/topics/"):
+        if relpath.startswith(f"{wp.WIKI_DIR}/topics/"):
             continue
         source_folder = wp.wiki_to_source_folder(relpath)
         if source_folder is None:
@@ -345,7 +346,7 @@ def _rule_orphan_wiki(
     findings: list[Finding] = []
     for relpath in page_relpaths:
         # Skip topics — they intentionally may have no inbound links.
-        if relpath.startswith("wiki/topics/"):
+        if relpath.startswith(f"{wp.WIKI_DIR}/topics/"):
             continue
         # Has inbound links?
         if inbound.get(relpath):
