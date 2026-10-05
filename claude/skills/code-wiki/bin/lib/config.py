@@ -10,10 +10,25 @@ from typing import Any
 
 import yaml
 
+from . import wiki_path as wp
 
-CONFIG_PATH = Path("wiki/config.yaml")
-RESERVED_DIRS = {"wiki", ".code-wiki"}
+
 SCHEMA_VERSION = 1
+STATE_DIR = ".code-wiki"
+
+
+def config_path() -> Path:
+    """`<wiki dir>/config.yaml`, project-root-relative (see wiki_path.WIKI_DIR)."""
+    return Path(str(wp.WIKI_DIR)) / "config.yaml"
+
+
+def __getattr__(name: str):
+    # Back-compat: CONFIG_PATH / RESERVED_DIRS used to be module constants.
+    if name == "CONFIG_PATH":
+        return config_path()
+    if name == "RESERVED_DIRS":
+        return {str(wp.WIKI_DIR), STATE_DIR}
+    raise AttributeError(name)
 
 
 class ConfigError(Exception):
@@ -25,20 +40,22 @@ def load(project_root: Path) -> dict[str, Any]:
 
     Returns the parsed config dict on success. Raises ConfigError otherwise.
     """
+    wp.configure(project_root)
+    CONFIG_PATH = config_path()
     path = project_root / CONFIG_PATH
     if not path.exists():
         raise ConfigError(
-            f"{CONFIG_PATH} not found in {project_root}. "
+            f"{CONFIG_PATH.as_posix()} not found in {project_root}. "
             f"Run /code-wiki:init first."
         )
     try:
         with path.open("r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
     except yaml.YAMLError as e:
-        raise ConfigError(f"{CONFIG_PATH} is not valid YAML: {e}") from e
+        raise ConfigError(f"{CONFIG_PATH.as_posix()} is not valid YAML: {e}") from e
 
     if not isinstance(data, dict):
-        raise ConfigError(f"{CONFIG_PATH} must be a YAML mapping at the top level.")
+        raise ConfigError(f"{CONFIG_PATH.as_posix()} must be a YAML mapping at the top level.")
 
     validate(data, project_root)
     return data
@@ -122,11 +139,20 @@ def _validate_source_root(path: str, project_root: Path, idx: int) -> None:
         raise ConfigError(
             f"config.yaml: source_roots[{idx}].path must not contain '..'"
         )
-    # Reserved top-level directories.
-    if parts[0] in RESERVED_DIRS:
+    # Reserved directories: the state dir, and the wiki dir in both directions —
+    # a source root inside the wiki would wikify the wiki, and a source root that
+    # contains the wiki (e.g. `docs` holding `docs/codewiki`) would too.
+    wiki_parts = wp.WIKI_DIR.parts
+    if parts[0] == STATE_DIR or parts[:len(wiki_parts)] == wiki_parts:
+        reserved = STATE_DIR if parts[0] == STATE_DIR else str(wp.WIKI_DIR)
         raise ConfigError(
             f"config.yaml: source_roots[{idx}].path cannot be inside "
-            f"{parts[0]!r} (reserved by code-wiki)"
+            f"{reserved!r} (reserved by code-wiki)"
+        )
+    if wiki_parts[:len(parts)] == parts:
+        raise ConfigError(
+            f"config.yaml: source_roots[{idx}].path {path!r} contains the wiki "
+            f"directory {str(wp.WIKI_DIR)!r}; pick a narrower source root"
         )
     # Must exist as a directory at validation time.
     full = project_root / p

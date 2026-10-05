@@ -53,6 +53,9 @@ Before opening, it checks that both the map and the wiki are current:
 | no code-wiki | create it? (no → the map opens without the chat) |
 | wiki older than the code | sync it? (no → the panel shows a warning) |
 
+A code-wiki moved with `.code-wiki-dir` (e.g. to `docs/codewiki/` because the
+repo's own `wiki/` is taken) is found automatically; the chat is told where it is.
+
 For a monorepo whose code-wikis sit next to each sub-project rather than at the
 repo root, name them: `/arch-explorer:open --wiki=web/api --wiki=web/ui`. When
 the root has no wiki, open lists the directories that do and offers to use them.

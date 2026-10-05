@@ -179,6 +179,23 @@ per_file_pages:
 
 The plugin **never auto-edits this file** — it's user-curated. Same for `wiki/CLAUDE.md` (the style guide).
 
+### Wiki location
+
+The wiki lives at `wiki/` by default. If that directory is already taken — by another
+documentation system, say — put it somewhere else at init time:
+
+```
+/code-wiki:init        # answer the location question, or run the script with --wiki-dir
+python3 "${CLAUDE_PLUGIN_ROOT}/bin/init.py" --project-root "$(pwd)" \
+    --source-roots engine --wiki-dir docs/codewiki
+```
+
+`init` records the location in `.code-wiki-dir` at the project root (one line,
+e.g. `docs/codewiki`). **Commit that file**: every command, and `arch-explorer`,
+reads it. `$CODE_WIKI_DIR` overrides it for one run. The location must be a
+relative path without `.`/`..`, and no source root may be inside it or contain it.
+Everything else in this README that says `wiki/` means that directory.
+
 ## Directory layout
 
 ```
@@ -235,7 +252,6 @@ Not in v1, planned for v2:
 - **Topic-page user-edit preservation** — currently regeneration overwrites freely (per design); v2 may add markers for hand-edited sections.
 - **Performance** — parallel sibling generation, incremental hashing.
 - **Non-git workflows** — fall back to file mtimes when not in a git repo.
-- **Wiki location override** — currently `wiki/` is hardcoded; a small bootstrap file could allow `docs/wiki/` etc.
 
 ## Design docs
 

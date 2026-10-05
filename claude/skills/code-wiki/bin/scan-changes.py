@@ -42,6 +42,7 @@ def main() -> int:
     args = parser.parse_args()
 
     project_root = args.project_root.resolve()
+    wp.configure(project_root)
 
     state = st.load(project_root)
     if state is None:

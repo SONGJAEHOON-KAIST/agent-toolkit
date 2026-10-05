@@ -4,6 +4,10 @@ argument-hint: [--fix]
 allowed-tools: Bash(python3 *), Read
 ---
 
+> **Wiki directory.** In this command, `wiki/` means the project's wiki directory. Resolve it once before Step 1:
+> `python3 "${CLAUDE_PLUGIN_ROOT}/bin/wiki-dir.py" --project-root "$(pwd)"`
+> It prints `wiki` unless the project's committed `.code-wiki-dir` (or `$CODE_WIKI_DIR`) names another location, e.g. `docs/codewiki`. Read every `wiki/` below as that directory. Paths printed by the bin scripts (`wiki_path`, `child_wikis`, `deletions`, …) already include it — use them as given.
+
 The user wants to lint the wiki. Arguments:
 
 `$ARGUMENTS`

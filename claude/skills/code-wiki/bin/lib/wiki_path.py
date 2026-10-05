@@ -12,8 +12,80 @@ import os.path
 from pathlib import Path, PurePosixPath
 
 
-WIKI_DIR = PurePosixPath("wiki")
 INDEX_NAME = "index.md"
+
+# ── Wiki location ────────────────────────────────────────────────────────
+# The wiki lives at `wiki/` by default. A project whose `wiki/` is already taken
+# (for example by another documentation system) can move it:
+#
+#   1. env var `CODE_WIKI_DIR`             (one run; wins over the file)
+#   2. file `<project_root>/.code-wiki-dir` (committed; one line, e.g. `docs/codewiki`)
+#   3. `wiki`                               (default — unchanged behaviour)
+#
+# The value is a project-root-relative POSIX path. Every bin script calls
+# `configure(project_root)` after parsing `--project-root`, so the module-level
+# `WIKI_DIR` always reflects the project being processed.
+DEFAULT_WIKI_DIR = "wiki"
+DIR_FILE = ".code-wiki-dir"
+ENV_VAR = "CODE_WIKI_DIR"
+_FORBIDDEN_FIRST = {".code-wiki", ".git"}
+
+
+class WikiDirError(ValueError):
+    """Raised when the configured wiki directory is not a safe relative path."""
+
+
+def validate_wiki_dir(raw: str, source: str = "wiki dir") -> PurePosixPath:
+    value = raw.strip().replace("\\", "/")
+    if value.startswith("/") or (len(value) > 1 and value[1] == ":"):
+        raise WikiDirError(f"{source}: wiki directory must be relative; got {raw!r}")
+    segments = [seg for seg in value.rstrip("/").split("/")]
+    if not value.strip("/") or any(seg == "" for seg in segments):
+        raise WikiDirError(f"{source}: wiki directory must be a non-empty relative path; got {raw!r}")
+    if any(seg in (".", "..") for seg in segments):
+        raise WikiDirError(f"{source}: wiki directory must not contain '.' or '..'; got {raw!r}")
+    p = PurePosixPath(*segments)
+    if p.parts[0] in _FORBIDDEN_FIRST:
+        raise WikiDirError(f"{source}: wiki directory cannot be inside {p.parts[0]!r}")
+    return p
+
+
+def resolve_wiki_dir(project_root: str | Path | None = None) -> PurePosixPath:
+    env = os.environ.get(ENV_VAR)
+    if env:
+        return validate_wiki_dir(env, f"${ENV_VAR}")
+    root = Path(project_root) if project_root is not None else Path.cwd()
+    f = root / DIR_FILE
+    if f.is_file():
+        lines = [l for l in f.read_text(encoding="utf-8").splitlines()
+                 if l.strip() and not l.lstrip().startswith("#")]
+        if lines:
+            return validate_wiki_dir(lines[0], DIR_FILE)
+    return PurePosixPath(DEFAULT_WIKI_DIR)
+
+
+WIKI_DIR = resolve_wiki_dir()
+
+
+def configure(project_root: str | Path) -> PurePosixPath:
+    """Re-resolve `WIKI_DIR` for `project_root`. Returns the resolved directory."""
+    global WIKI_DIR
+    WIKI_DIR = resolve_wiki_dir(project_root)
+    return WIKI_DIR
+
+
+def wiki_dir() -> PurePosixPath:
+    return WIKI_DIR
+
+
+def wiki_prefix() -> str:
+    """`WIKI_DIR` as a string with a trailing slash, for `startswith` checks."""
+    return str(WIKI_DIR) + "/"
+
+
+def is_wiki_path(relpath: str | Path) -> bool:
+    s = str(PurePosixPath(str(relpath)))
+    return s == str(WIKI_DIR) or s.startswith(wiki_prefix())
 
 
 def source_folder_to_wiki(folder_relpath: str | Path) -> PurePosixPath:
@@ -67,9 +139,10 @@ def wiki_to_source_folder(wiki_relpath: str | Path) -> PurePosixPath | None:
     `wiki/index.md` (i.e. there is no enclosing source folder under wiki).
     """
     p = PurePosixPath(str(wiki_relpath))
-    if not p.parts or p.parts[0] != "wiki":
+    n = len(WIKI_DIR.parts)
+    if p.parts[:n] != WIKI_DIR.parts:
         return None
-    inner = p.parts[1:]  # drop the 'wiki' prefix
+    inner = p.parts[n:]  # drop the wiki-dir prefix
     if not inner:
         return None
     if inner[-1] == INDEX_NAME:

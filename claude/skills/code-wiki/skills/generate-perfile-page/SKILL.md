@@ -5,6 +5,8 @@ description: Generates a wiki page (Markdown) for a single source file when it i
 
 # generate-perfile-page
 
+> **Wiki directory.** `wiki/` in this skill means the project's wiki directory — `wiki` unless the project's `.code-wiki-dir` names another location (resolve with `python3 "${CLAUDE_PLUGIN_ROOT}/bin/wiki-dir.py" --project-root "$(pwd)"`). Target paths handed to you by the command already include it; use them as given. Relative links between pages do not depend on it.
+
 Use this skill to produce one per-file wiki page at `wiki/<source-root>/<...>/<filename>.md` (note: same directory as the leaf's `index.md`, not a sub-directory).
 
 ## When to use

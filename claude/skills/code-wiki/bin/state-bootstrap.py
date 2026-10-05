@@ -39,7 +39,8 @@ def main() -> int:
     args = parser.parse_args()
 
     project_root = args.project_root.resolve()
-    wiki_root = project_root / "wiki"
+    wp.configure(project_root)
+    wiki_root = project_root / str(wp.WIKI_DIR)
     if not wiki_root.is_dir():
         print(f"Error: {wiki_root} does not exist. Run /code-wiki:init first.",
               file=sys.stderr)
@@ -56,9 +57,9 @@ def main() -> int:
         return 1
 
     # Step 1: infer last_ingested_sha from git log.
-    last_sha = gitlib.last_touched(project_root, "wiki")
+    last_sha = gitlib.last_touched(project_root, str(wp.WIKI_DIR))
     if last_sha is None:
-        print("Error: wiki/ has not been committed; run /code-wiki:build first.",
+        print(f"Error: {wp.WIKI_DIR}/ has not been committed; run /code-wiki:build first.",
               file=sys.stderr)
         return 1
 
@@ -89,7 +90,7 @@ def main() -> int:
         wiki_relpath = str(wiki_file.relative_to(project_root)).replace("\\", "/")
 
         # Skip the schema file. Its content is user-curated, not auto-generated.
-        if wiki_relpath == "wiki/CLAUDE.md":
+        if wiki_relpath == f"{wp.WIKI_DIR}/CLAUDE.md":
             continue
 
         # Skip config.yaml — though it has no .md extension, defensive.
@@ -146,7 +147,7 @@ def _classify_page(
         if not in folder_info (e.g. source folder gone), classify as leaf.
       - Other `wiki/.../<name>.md` (non-index) → perfile.
     """
-    if wiki_relpath.startswith("wiki/topics/"):
+    if wiki_relpath.startswith(f"{wp.WIKI_DIR}/topics/"):
         return "topic", []
 
     parts = wiki_relpath.split("/")

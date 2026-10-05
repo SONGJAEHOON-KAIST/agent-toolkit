@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Bootstrap code-wiki in a user's project.
 
-Creates `wiki/CLAUDE.md`, `wiki/config.yaml`, `.code-wiki/`, and appends
-`.code-wiki/` to `.gitignore`. Aborts if `wiki/` already exists.
+Creates `<wiki>/CLAUDE.md`, `<wiki>/config.yaml`, `.code-wiki/`, and appends
+`.code-wiki/` to `.gitignore`. Aborts if `<wiki>/` already exists. `<wiki>` is
+`wiki` unless `--wiki-dir` (recorded in `.code-wiki-dir`) or `$CODE_WIKI_DIR` says
+otherwise — see `lib/wiki_path.py`.
 
 Invocation (from /code-wiki:init):
     python3 init.py \\
@@ -26,6 +28,7 @@ from pathlib import Path
 # its sibling lib/ is at code-wiki/bin/lib/.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lib import config as cfg  # noqa: E402
+from lib import wiki_path as wp  # noqa: E402
 
 
 WIKI_GITIGNORE_LINE = ".code-wiki/"
@@ -41,18 +44,41 @@ def main() -> int:
                         help="Wiki output language (default: en).")
     parser.add_argument("--language-hints", default="",
                         help="Comma-separated language/framework hints (optional).")
+    parser.add_argument("--wiki-dir", default=None,
+                        help="Project-root-relative wiki directory (default: wiki). "
+                             "Recorded in .code-wiki-dir so later commands find it. "
+                             "Use when wiki/ is already taken, e.g. docs/codewiki.")
     args = parser.parse_args()
 
     project_root = args.project_root.resolve()
+    dir_file = project_root / wp.DIR_FILE
+    if args.wiki_dir is not None:
+        try:
+            requested = wp.validate_wiki_dir(args.wiki_dir, "--wiki-dir")
+        except wp.WikiDirError as e:
+            return _fail(str(e))
+        if dir_file.is_file():
+            current = wp.resolve_wiki_dir(project_root)
+            if current != requested:
+                return _fail(f"{wp.DIR_FILE} already points at {current}; "
+                             f"edit or remove it before choosing {requested}.")
+    wp.configure(project_root)
     plugin_root = _plugin_root()
+    wiki_rel = str(requested) if args.wiki_dir is not None else str(wp.WIKI_DIR)
 
-    # 1. Check that wiki/ does not already exist.
-    wiki_dir = project_root / "wiki"
+    # 1. Check that the wiki dir does not already exist.
+    wiki_dir = project_root / wiki_rel
     if wiki_dir.exists():
         return _fail(
-            f"wiki/ already exists at {wiki_dir}. "
-            f"Remove it first if you want to re-initialize."
+            f"{wiki_rel}/ already exists at {wiki_dir}. "
+            f"Remove it first if you want to re-initialize, "
+            f"or choose another location with --wiki-dir."
         )
+    if args.wiki_dir is not None:
+        dir_file.write_text(
+            "# code-wiki: project-root-relative wiki directory (commit this file)\n"
+            f"{wiki_rel}\n", encoding="utf-8")
+        wp.configure(project_root)
 
     # 2. Parse and validate source roots.
     source_roots = [s.strip() for s in args.source_roots.split(",") if s.strip()]
@@ -83,8 +109,10 @@ def main() -> int:
 
     # 6. Print next-step guidance to stdout.
     print(f"Initialized code-wiki at {project_root}")
-    print(f"  - wiki/CLAUDE.md   (style guide; edit to taste)")
-    print(f"  - wiki/config.yaml (configuration; review and adjust)")
+    print(f"  - {wiki_rel}/CLAUDE.md   (style guide; edit to taste)")
+    print(f"  - {wiki_rel}/config.yaml (configuration; review and adjust)")
+    if args.wiki_dir is not None:
+        print(f"  - {wp.DIR_FILE}  (wiki location; commit it)")
     print(f"  - .code-wiki/      (local state; gitignored)")
     print(f"")
     print(f"Source roots configured:")

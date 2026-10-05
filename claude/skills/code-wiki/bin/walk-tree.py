@@ -44,6 +44,7 @@ def main() -> int:
     args = parser.parse_args()
 
     project_root = args.project_root.resolve()
+    wp.configure(project_root)
     scope = args.scope_path.rstrip("/") if args.scope_path else None
 
     try:

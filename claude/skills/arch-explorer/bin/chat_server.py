@@ -151,11 +151,17 @@ def build_prompt(question: str, ctx, wiki: dict, wikis: list[dict] | None = None
     block = format_context(ctx)
     if block:
         parts.append(block)
-    if wikis and [w.get("dir") for w in wikis] != [status.DEFAULT_WIKI]:
-        where = ", ".join(f"`{status.wiki_location(w['dir'])}`" for w in wikis)
+    def _pages(w: dict) -> str:
+        return w.get("pages") or status.wiki_location(w["dir"])
+
+    # Tell the engine where the wikis are whenever that is not the single `wiki/`
+    # at the repository root — several wikis, or one moved by `.code-wiki-dir`.
+    if wikis and ([w.get("dir") for w in wikis] != [status.DEFAULT_WIKI]
+                  or [_pages(w) for w in wikis] != ["wiki/"]):
+        where = ", ".join(f"`{_pages(w)}`" for w in wikis)
         parts.append(f"[wikis] code-wiki locations, relative to the repository root: {where}")
         parts += [line for w in wikis
-                  if (line := _wiki_status_line(w, status.wiki_location(w["dir"])))]
+                  if (line := _wiki_status_line(w, _pages(w)))]
     elif (line := _wiki_status_line(wiki)):
         parts.append(line)
     parts.append(f"question:\n{question}")

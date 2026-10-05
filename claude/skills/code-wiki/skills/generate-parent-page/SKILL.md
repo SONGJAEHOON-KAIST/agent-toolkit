@@ -5,6 +5,8 @@ description: Generates a wiki page (Markdown) for a parent source folder — one
 
 # generate-parent-page
 
+> **Wiki directory.** `wiki/` in this skill means the project's wiki directory — `wiki` unless the project's `.code-wiki-dir` names another location (resolve with `python3 "${CLAUDE_PLUGIN_ROOT}/bin/wiki-dir.py" --project-root "$(pwd)"`). Target paths handed to you by the command already include it; use them as given. Relative links between pages do not depend on it.
+
 Use this skill to generate one parent folder's wiki page. A parent folder is a source folder that has at least one direct child folder containing wikifiable content. The page must do three jobs:
 
 1. **Loose-files synthesis** — describe the folder's own (non-subdirectory) source files, if any.
