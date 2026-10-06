@@ -1,6 +1,6 @@
 {
   "name": "code-wiki",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Builds and maintains a hierarchical, LLM-generated wiki over a codebase — leaf wikis summarize source folders, parents synthesize children, and topic pages capture cross-cutting concerns. Following Karpathy's llm-wiki pattern adapted to source code.",
   "author": {
     "name": "Seokhyun Kim",
