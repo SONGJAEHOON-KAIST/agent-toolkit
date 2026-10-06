@@ -6,7 +6,7 @@ allowed-tools: Bash(python3 *), Bash(git *), Bash(mkdir *), Read, Write, Skill, 
 
 > **Wiki directory.** In this command, `wiki/` means the project's wiki directory. Resolve it once before Step 1:
 > `python3 "${CLAUDE_PLUGIN_ROOT}/bin/wiki-dir.py" --project-root "$(pwd)"`
-> It prints `wiki` unless the project's committed `.code-wiki-dir` (or `$CODE_WIKI_DIR`) names another location, e.g. `docs/codewiki`. Read every `wiki/` below as that directory. Paths printed by the bin scripts (`wiki_path`, `child_wikis`, `deletions`, …) already include it — use them as given.
+> It prints `wiki` unless the project's committed `.code-wiki-dir` (or `$CODE_WIKI_DIR`) names another location, e.g. `docs/codewiki`. Read every `wiki/` below as that directory. Paths printed by the bin scripts (`wiki_path`, `child_wikis`, `deletions`, …) already include it — use them as given. If `python3` is not a working interpreter (on Windows it can be the Microsoft Store stub, which prints nothing or opens the Store), run every `python3` command in this file with `python` instead.
 
 The user wants to build the wiki from scratch. The arguments may include `--force`.
 
@@ -16,8 +16,8 @@ The user wants to build the wiki from scratch. The arguments may include `--forc
 
 Run these checks in order. Stop on the first failure with a clear message.
 
-1. **Wiki initialized?** Verify `wiki/config.yaml` exists in the project root. If not, abort:
-   > "wiki/config.yaml not found. Run `/code-wiki:init` first."
+1. **Wiki initialized?** Run `python3 "${CLAUDE_PLUGIN_ROOT}/bin/wiki-dir.py" --project-root "$(pwd)" --require-config`. It prints the wiki directory and exits non-zero when `<that directory>/config.yaml` is missing — do **not** test a literal `wiki/config.yaml`, which is wrong whenever `.code-wiki-dir` moves the wiki. If it exits non-zero, abort:
+   > "<wiki dir>/config.yaml not found. Run `/code-wiki:init` first."
 
 2. **Git repo?** Run `git rev-parse HEAD` and capture the SHA. If it fails (not a git repo, or no commits), abort:
    > "code-wiki requires a git repository with at least one commit. Initialize git and commit your source first."

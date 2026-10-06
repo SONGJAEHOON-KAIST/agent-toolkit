@@ -6,7 +6,7 @@ allowed-tools: Bash(python3 *), Read, Write, Skill
 
 > **Wiki directory.** In this command, `wiki/` means the project's wiki directory. Resolve it once before Step 1:
 > `python3 "${CLAUDE_PLUGIN_ROOT}/bin/wiki-dir.py" --project-root "$(pwd)"`
-> It prints `wiki` unless the project's committed `.code-wiki-dir` (or `$CODE_WIKI_DIR`) names another location, e.g. `docs/codewiki`. Read every `wiki/` below as that directory. Paths printed by the bin scripts (`wiki_path`, `child_wikis`, `deletions`, …) already include it — use them as given.
+> It prints `wiki` unless the project's committed `.code-wiki-dir` (or `$CODE_WIKI_DIR`) names another location, e.g. `docs/codewiki`. Read every `wiki/` below as that directory. Paths printed by the bin scripts (`wiki_path`, `child_wikis`, `deletions`, …) already include it — use them as given. If `python3` is not a working interpreter (on Windows it can be the Microsoft Store stub, which prints nothing or opens the Store), run every `python3` command in this file with `python` instead.
 
 The user wants to create a topic page. Arguments:
 
@@ -16,8 +16,8 @@ The first non-flag token is the topic name (kebab-case). An optional `--descript
 
 ## Step 1: Preconditions
 
-1. **Wiki initialized?** Verify `wiki/config.yaml` exists. If not:
-   > "wiki/config.yaml not found. Run `/code-wiki:init` and `/code-wiki:build` first."
+1. **Wiki initialized?** Run `python3 "${CLAUDE_PLUGIN_ROOT}/bin/wiki-dir.py" --project-root "$(pwd)" --require-config`. It prints the wiki directory and exits non-zero when `<that directory>/config.yaml` is missing — do **not** test a literal `wiki/config.yaml`, which is wrong whenever `.code-wiki-dir` moves the wiki. If it exits non-zero, abort:
+   > "<wiki dir>/config.yaml not found. Run `/code-wiki:init` and `/code-wiki:build` first."
 
 2. **Wiki has content?** Verify at least one `wiki/<source-root>/index.md` exists. If `wiki/` is otherwise empty:
    > "Wiki has no generated pages. Run `/code-wiki:build` first."

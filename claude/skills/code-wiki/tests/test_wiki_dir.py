@@ -183,3 +183,33 @@ def test_wiki_dir_script_rejects_unsafe_file(tmp_path):
     root = _project(tmp_path, wiki_dir="../outside")
     r = _bin("wiki-dir.py", root)
     assert r.returncode == 2 and "must not contain" in r.stderr
+
+
+# ── precondition check (`--require-config`) ───────────────────────────
+
+def test_require_config_checks_resolved_dir(tmp_path):
+    """The 'wiki initialized?' check must look in the moved dir, not a literal wiki/."""
+    root = _project(tmp_path)  # .code-wiki-dir → docs/codewiki; wiki/ is the project's own
+    r = _bin("wiki-dir.py", root, "--require-config")
+    assert r.returncode == 3 and "docs/codewiki/config.yaml not found" in r.stderr
+    (root / "docs/codewiki").mkdir(parents=True)
+    (root / "docs/codewiki/config.yaml").write_text("version: 1\n", encoding="utf-8")
+    r = _bin("wiki-dir.py", root, "--require-config")
+    assert r.returncode == 0 and r.stdout.strip() == "docs/codewiki"
+
+
+def test_require_config_default_location(tmp_path):
+    root = _project(tmp_path, wiki_dir=None)  # wiki/ exists but has no config.yaml
+    r = _bin("wiki-dir.py", root, "--require-config")
+    assert r.returncode == 3 and "wiki/config.yaml not found" in r.stderr
+
+
+def test_commands_never_test_literal_wiki_config():
+    """Every command's precondition goes through --require-config."""
+    import re
+    cmds = BIN.parent / "commands"
+    for f in cmds.glob("*.md"):
+        text = f.read_text(encoding="utf-8")
+        assert not re.search(r"Verify `wiki/config\.yaml` exists", text), f.name
+    for name in ["build.md", "sync.md", "query.md", "topic.md", "rebuild.md"]:
+        assert "--require-config" in (cmds / name).read_text(encoding="utf-8"), name

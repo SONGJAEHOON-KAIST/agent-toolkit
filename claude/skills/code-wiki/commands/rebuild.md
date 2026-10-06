@@ -6,7 +6,7 @@ allowed-tools: Bash(python3 *), Bash(git *), Bash(rm *), Bash(rmdir *), Bash(mkd
 
 > **Wiki directory.** In this command, `wiki/` means the project's wiki directory. Resolve it once before Step 1:
 > `python3 "${CLAUDE_PLUGIN_ROOT}/bin/wiki-dir.py" --project-root "$(pwd)"`
-> It prints `wiki` unless the project's committed `.code-wiki-dir` (or `$CODE_WIKI_DIR`) names another location, e.g. `docs/codewiki`. Read every `wiki/` below as that directory. Paths printed by the bin scripts (`wiki_path`, `child_wikis`, `deletions`, …) already include it — use them as given.
+> It prints `wiki` unless the project's committed `.code-wiki-dir` (or `$CODE_WIKI_DIR`) names another location, e.g. `docs/codewiki`. Read every `wiki/` below as that directory. Paths printed by the bin scripts (`wiki_path`, `child_wikis`, `deletions`, …) already include it — use them as given. If `python3` is not a working interpreter (on Windows it can be the Microsoft Store stub, which prints nothing or opens the Store), run every `python3` command in this file with `python` instead.
 
 The user wants to force-regenerate part or all of the wiki. The argument may be a path scoped under one of the configured source roots.
 
@@ -16,7 +16,7 @@ The user wants to force-regenerate part or all of the wiki. The argument may be 
 
 Same as `/code-wiki:build`:
 
-1. `wiki/config.yaml` must exist (else suggest `/code-wiki:init`).
+1. `python3 "${CLAUDE_PLUGIN_ROOT}/bin/wiki-dir.py" --project-root "$(pwd)" --require-config` must exit 0 — it checks `<wiki dir>/config.yaml`, not a literal `wiki/config.yaml` (else suggest `/code-wiki:init`).
 2. The project must be a git repo (capture HEAD SHA).
 
 If `$ARGUMENTS` is empty: this is a **full rebuild** — equivalent to `/code-wiki:build --force`. Skip the path-validation step and proceed.
